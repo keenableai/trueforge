@@ -7,7 +7,7 @@
 import { CancellationReason, TurnOffloadReason, type TurnHandle } from '@truefoundry/trueforge-core/agent-session';
 import { Mutex } from 'async-mutex';
 
-const DEFAULT_PAUSED_KEEPALIVE_MS = 30_000;
+const DEFAULT_PAUSED_KEEPALIVE_MS = 300_000;
 
 interface ActiveTurnRun {
   turn: TurnHandle;

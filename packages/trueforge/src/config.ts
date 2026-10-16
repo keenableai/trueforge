@@ -775,7 +775,7 @@ export interface SharedServerConfiguration {
   /**
    * How long a paused turn stays in memory before it is offloaded.
    * The row stays paused. The next send on the owner rebuilds it.
-   * Env: `TURN_PAUSED_KEEPALIVE_SECONDS`. Default 30.
+   * Env: `TURN_PAUSED_KEEPALIVE_SECONDS`. Default 300.
    */
   TURN_PAUSED_KEEPALIVE_SECONDS: number;
   /**
@@ -1172,7 +1172,7 @@ const shared: SharedServerConfiguration = {
   TURN_PAUSED_KEEPALIVE_SECONDS: parsePositiveInt({
     envKey: 'TURN_PAUSED_KEEPALIVE_SECONDS',
     raw: getEnv('TURN_PAUSED_KEEPALIVE_SECONDS'),
-    defaultValue: 30,
+    defaultValue: 300,
   }),
   TURN_SSE_STREAM_WRITE_TIMEOUT_MS: parsePositiveInt({
     envKey: 'TURN_SSE_STREAM_WRITE_TIMEOUT_MS',
