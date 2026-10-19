@@ -7,10 +7,8 @@
 import { CancellationReason, type TurnHandle } from '@truefoundry/trueforge-core/agent-session';
 import { Mutex } from 'async-mutex';
 
-type ActiveTurnHandle = Pick<TurnHandle, 'id' | 'session_id' | 'send'>;
-
-interface ActiveTurnRun {
-  turn: ActiveTurnHandle;
+interface ActiveTurnRun<TTransaction> {
+  turn: TurnHandle<Record<string, never>, TTransaction>;
   abortController: AbortController;
   waitUntilCompleted: Promise<void>;
   markCompleted: () => void;
@@ -20,8 +18,8 @@ function activeTurnKey(sessionId: string, turnId: string): string {
   return `${sessionId}:${turnId}`;
 }
 
-export class ActiveTurnRegistry {
-  private readonly runs = new Map<string, ActiveTurnRun>();
+export class ActiveTurnRegistry<TTransaction = never> {
+  private readonly runs = new Map<string, ActiveTurnRun<TTransaction>>();
   /** Per-turn mutex. Dropped once unlocked, which means no waiter is still queued. */
   private readonly turnLocks = new Map<string, Mutex>();
   private alreadyShutDownAbortReason: CancellationReason | undefined;
@@ -58,14 +56,14 @@ export class ActiveTurnRegistry {
   track<T>(input: {
     abortController: AbortController;
     stream: AsyncIterable<T>;
-    turn: ActiveTurnHandle;
+    turn: TurnHandle<Record<string, never>, TTransaction>;
   }): AsyncGenerator<T> {
     const key = activeTurnKey(input.turn.session_id, input.turn.id);
     const { promise: waitUntilCompleted, resolve } = Promise.withResolvers<undefined>();
     const markCompleted = (): void => {
       resolve(undefined);
     };
-    const run: ActiveTurnRun = {
+    const run: ActiveTurnRun<TTransaction> = {
       abortController: input.abortController,
       waitUntilCompleted,
       markCompleted,
@@ -119,7 +117,10 @@ export class ActiveTurnRegistry {
    * resumable here — never started, already terminal (the stream removed its run), aborting, or
    * registered without a handle.
    */
-  getTurnHandle(input: { sessionId: string; turnId: string }): ActiveTurnHandle | undefined {
+  getTurnHandle(input: {
+    sessionId: string;
+    turnId: string;
+  }): TurnHandle<Record<string, never>, TTransaction> | undefined {
     const run = this.runs.get(activeTurnKey(input.sessionId, input.turnId));
     if (!run) {
       return undefined;

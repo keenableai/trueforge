@@ -78,7 +78,7 @@ export function toWireSession(record: SessionRecord): Session {
 export interface SessionsRouterDeps<TTransaction = never> {
   sessions: Sessions<Record<string, never>, Record<string, never>, TTransaction>;
   sessionStore: ISessionStore<Record<string, never>, Record<string, never>, TTransaction>;
-  activeTurns: ActiveTurnRegistry;
+  activeTurns: ActiveTurnRegistry<TTransaction>;
   resolveModelProviderStore: (c: Context) => IModelProviderStore;
   resolveMcpServerStore: (c: Context) => IMcpServerStore;
   resolveSkillStore: ResolveSkillStore;
@@ -93,8 +93,8 @@ export interface SessionsRouterDeps<TTransaction = never> {
   authorizer: Authorizer;
 }
 
-function cancelTurnOnThisExecutor(
-  activeTurns: ActiveTurnRegistry,
+function cancelTurnOnThisExecutor<TTransaction>(
+  activeTurns: ActiveTurnRegistry<TTransaction>,
   input: { sessionId: string; turnId: string; reason: CancellationReason },
 ): boolean {
   return activeTurns.cancelIfRunning({
@@ -108,7 +108,9 @@ function cancelTurnOnThisExecutor(
  * Peer-facing cancel handler: aborts the turn if it runs in this process.
  * 200 = abort fired, 412 = not running here (treated by callers as a no-op).
  */
-export function cancelSessionTurnPeerHandler(activeTurns: ActiveTurnRegistry): RequestReplyRouteHandler {
+export function cancelSessionTurnPeerHandler<TTransaction>(
+  activeTurns: ActiveTurnRegistry<TTransaction>,
+): RequestReplyRouteHandler {
   // Synchronous by nature; the transport expects a Promise and require-await
   // forbids an async fn without awaits.
   return request => {
@@ -129,8 +131,8 @@ export function cancelSessionTurnPeerHandler(activeTurns: ActiveTurnRegistry): R
 }
 
 /** A registry to abort in, a session to freeze, durable state to read, and a way to reach peers. */
-export interface CancelTurnDeps {
-  activeTurns: ActiveTurnRegistry;
+export interface CancelTurnDeps<TTransaction = never> {
+  activeTurns: ActiveTurnRegistry<TTransaction>;
   session: Pick<SessionHandle, 'session_id' | 'freezeTurn'>;
   sessionStore: Pick<ISessionStore, 'getTurn'>;
   redis?: RedisClient | undefined;
@@ -150,8 +152,8 @@ export interface CancelTurnDeps {
  * the owning replica may still be executing — but the turn is still frozen.
  * Later writes from that replica lose to first-terminal-write-wins.
  */
-export async function cancelSessionTurn(
-  deps: CancelTurnDeps,
+export async function cancelSessionTurn<TTransaction>(
+  deps: CancelTurnDeps<TTransaction>,
   input: { turnId: string; reason?: CancellationReason },
 ): Promise<void> {
   const { turnId, reason = CancellationReason.ClientCancelled } = input;

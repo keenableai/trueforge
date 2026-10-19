@@ -68,7 +68,7 @@ import { getTurnExecutionError, startTurnInProcess } from './turns';
 export interface ScheduleTurnExecutionDeps<TTransaction> {
   scheduleStore: IScheduleStore<TTransaction>;
   sessions: Sessions<Record<string, never>, Record<string, never>, TTransaction>;
-  activeTurns: ActiveTurnRegistry;
+  activeTurns: ActiveTurnRegistry<TTransaction>;
   eventSubscriptions: EventSubscriptionRegistry<TurnStreamingEvent>;
   logger: Logger;
   resolveModelProviderStore: (c: Context, runAsAgent?: AgentRecord) => IModelProviderStore<TTransaction>;

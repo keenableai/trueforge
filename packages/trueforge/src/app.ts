@@ -215,7 +215,7 @@ export interface ServerDeps<TTransaction> {
   /** Resolve turn skills - persistence store or TrueFoundry resolve with Service API key (schedule runs do have any caller token). */
   turnSkillsResolverStore: Pick<ISkillStore<TTransaction>, 'resolveTurnSkills'>;
   sessions: Sessions<Record<string, never>, Record<string, never>, TTransaction>;
-  activeTurns: ActiveTurnRegistry;
+  activeTurns: ActiveTurnRegistry<TTransaction>;
   /** Primary Redis client (server-owned); undefined in standalone mode. */
   redis?: RedisClient | undefined;
   /** Request-reply dispatch table served by this replica's executor. */

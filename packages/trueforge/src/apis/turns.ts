@@ -116,7 +116,7 @@ export function toContentDisposition(path: string): string {
 export interface TurnsRouterDeps<TTransaction = never> {
   sessions: Sessions<Record<string, never>, Record<string, never>, TTransaction>;
   sessionStore: ISessionStore<Record<string, never>, Record<string, never>, TTransaction>;
-  activeTurns: ActiveTurnRegistry;
+  activeTurns: ActiveTurnRegistry<TTransaction>;
   resolveModelProviderStore: (c: Context, runAsAgent?: AgentRecord) => IModelProviderStore;
   resolveMcpServerStore: (c: Context, runAsAgent?: AgentRecord) => IMcpServerWithAuthStore;
   resolveSkillStore: (c: Context) => ISkillStore;
@@ -136,8 +136,8 @@ export interface TurnsRouterDeps<TTransaction = never> {
  * stores; callers must resolve them from the request context (e.g. schedule `resolveTurnDeps(c, agent)`)
  * so TrueFoundry mode stays token-bound for models, MCP, and skills.
  */
-export type BeginTurnExecutionDeps = Pick<
-  TurnsRouterDeps,
+export type BeginTurnExecutionDeps<TTransaction> = Pick<
+  TurnsRouterDeps<TTransaction>,
   'activeTurns' | 'eventSubscriptions' | 'logger' | 'sandboxEnvironmentStore'
 > & {
   agentStore: IAgentStore;
@@ -155,7 +155,7 @@ interface BeginTurnExecutionParams<TTransaction> {
   userRef: string;
   /** Raw inbound request headers. Absent for a schedule run. */
   requestHeaders?: Record<string, string>;
-  deps: BeginTurnExecutionDeps;
+  deps: BeginTurnExecutionDeps<TTransaction>;
 }
 
 /**

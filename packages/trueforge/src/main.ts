@@ -590,7 +590,7 @@ async function createServerRuntime<TTransaction>(persistence: ServerPersistence<
     serviceFoundryClient,
   } = persistence;
 
-  const activeTurns = new ActiveTurnRegistry();
+  const activeTurns = new ActiveTurnRegistry<TTransaction>();
   const requestReplyRouter = new RequestReplyRouter();
   const eventSubscriptions = new EventSubscriptionRegistry<TurnStreamingEvent>(redis?.client);
   const sessions = new Sessions({ sessionStore });
