@@ -182,10 +182,16 @@ function commitActiveStream(snapshot: SessionSnapshot): SessionSnapshot {
   });
 }
 
-function buildCancelledTurnState(completedAt: string): TurnStateCancelled {
+function buildCancelledTurnState({
+  completedAt,
+  reason = 'Superseded by a later message',
+}: {
+  completedAt: string;
+  reason?: string;
+}): TurnStateCancelled {
   return {
     status: TURN_STATUS.CANCELLED,
-    reason: 'Superseded by a later message',
+    reason,
     completedAt,
   };
 }
@@ -263,7 +269,7 @@ function abandonInFlightClientTurn(snapshot: SessionSnapshot): SessionSnapshot {
   }
 
   const completedAt = new Date().toISOString();
-  const cancelledState = buildCancelledTurnState(completedAt);
+  const cancelledState = buildCancelledTurnState({ completedAt });
 
   if (hasIncompleteStream && active != null) {
     const activeSandboxIdValue = active.update.metadata?.custom?.[MESSAGE_CUSTOM_KEY.SANDBOX_ID];

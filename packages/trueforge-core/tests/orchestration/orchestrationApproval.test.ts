@@ -7,7 +7,7 @@ import { AgentThread } from '../../src/core/runtime/AgentThread';
 import { InternalEventType, type AgentThreadConstructorInput } from '../../src/core/runtime/AgentThread.types';
 import { AgentThreadOrchestrator } from '../../src/core/runtime/AgentThreadOrchestrator';
 import { NOOP_AGENT_TRACING } from '../../src/core/tracing/NoopAgentTracing';
-import { makeSilentLogger } from '../core/harnessMocks';
+import { makeSilentLogger, TEST_MODEL_NAME } from '../core/harnessMocks';
 import {
   driveUntilPauseOrDone,
   llmCreateInputs,
@@ -568,7 +568,11 @@ describe('AgentThreadOrchestrator.send: approval policy validation', () => {
     toolSet = makeApprovalGatedWriteNoteToolSet().toolSet;
     const thread = new AgentThread({
       definition: {
-        modelClient: { create: jest.fn(), createNonStream: jest.fn() },
+        modelClient: {
+          create: jest.fn(),
+          createNonStream: jest.fn(),
+        },
+        modelName: TEST_MODEL_NAME,
         instruction: INSTRUCTION,
         messages: undefined,
         modelParams: undefined,
@@ -744,6 +748,8 @@ function makeApprovalHarness(finalReply: string): {
           .mockImplementation(() => textReplyStream(finalReply)),
         createNonStream: jest.fn(),
       },
+      modelName: TEST_MODEL_NAME,
+
       instruction: INSTRUCTION,
       messages: undefined,
       modelParams: undefined,
@@ -801,6 +807,7 @@ function makeApprovalHarnessWithUserToolSet(finalReply: string): {
           .mockImplementation(() => textReplyStream(finalReply)),
         createNonStream: jest.fn(),
       },
+      modelName: TEST_MODEL_NAME,
       instruction: INSTRUCTION,
       messages: undefined,
       modelParams: undefined,

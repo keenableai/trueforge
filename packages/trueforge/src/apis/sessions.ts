@@ -2,7 +2,7 @@
  * DB-backed sessions APIs (mounted at /api/v1/sessions and /api/internal/sessions).
  */
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
-import type { ISessionStore, SessionRecord, Sessions } from '@truefoundry/trueforge-core/agent-session';
+import type { AgentSpec, ISessionStore, SessionRecord, Sessions } from '@truefoundry/trueforge-core/agent-session';
 import {
   SessionStoreConflictError,
   SessionStoreInvariantError,
@@ -10,14 +10,17 @@ import {
 } from '@truefoundry/trueforge-core/agent-session';
 import { type RedisClient, type RequestReplyRouter } from '@truefoundry/trueforge-core/request-reply';
 import type { Context } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import type { Logger } from 'winston';
+import type { ResolveSkillStoreInput } from '../app';
 import type { Authorizer } from '../auth/authorizer';
-import { createdBySubjectFromRequestContext, type ResolveRequestContext } from '../auth/identity';
+import { createdBySubjectFromRequestContext, type RequestContext, type ResolveRequestContext } from '../auth/identity';
 import type { IAgentStore } from '../db/agentStore';
 import type { IMcpServerStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
 import type { ISandboxEnvironmentStore } from '../db/sandboxEnvironmentStore';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
+import type { ISkillStore } from '../db/skillStore';
 import type { IWebSearchProviderStore } from '../db/webSearchProviderStore';
 import {
   cancelSessionRoute,
@@ -36,7 +39,6 @@ import { honoQueriesToRecord } from '../schemas/deepObjectQuery';
 import { isSessionAgentNameRef, parseListSessionsQuery, type Session } from '../schemas/session';
 import { newId } from '../utils/id';
 import { agentIfAccessible, canReadAgentBoundResource, canReadSession, resolveManagedAgentIds } from './agentAccess';
-import type { ResolveSkillStore } from './skills';
 
 export { cancelSessionTurn, cancelSessionTurnPeerHandler, SESSIONS_CANCEL_PATH } from '../runtime/cancelTurn';
 export type { CancelTurnDeps } from '../runtime/cancelTurn';
@@ -60,9 +62,9 @@ export interface SessionsRouterDeps {
   sessions: Sessions;
   sessionStore: ISessionStore;
   activeTurns: ActiveTurnRegistry;
-  resolveModelProviderStore: (c: Context) => IModelProviderStore;
-  resolveMcpServerStore: (c: Context) => IMcpServerStore;
-  resolveSkillStore: ResolveSkillStore;
+  resolveModelProviderStore: (input: { c: Context; allowInlineResources?: boolean }) => IModelProviderStore;
+  resolveMcpServerStore: (input: { c: Context; allowInlineResources?: boolean }) => IMcpServerStore;
+  resolveSkillStore: (input: ResolveSkillStoreInput) => ISkillStore;
   resolveAgentStore: (c: Context) => IAgentStore;
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore;
   sandboxEnvironmentStore: ISandboxEnvironmentStore;
@@ -84,6 +86,36 @@ function isSessionOwner({
   created_by_subject: { subject_id: string };
 }): boolean {
   return subject_id === created_by_subject.subject_id;
+}
+
+/**
+ * Inline create and spec replace check model, MCP, and skill names against `x-tfg-*` when those
+ * headers are present. The headers are not written onto the session.
+ */
+function validateInlineSessionSpec(
+  deps: Pick<
+    SessionsRouterDeps,
+    | 'resolveModelProviderStore'
+    | 'resolveMcpServerStore'
+    | 'resolveSkillStore'
+    | 'resolveSandboxProviderStore'
+    | 'sandboxEnvironmentStore'
+    | 'resolveWebSearchProviderStore'
+  >,
+  input: { c: Context; spec: AgentSpec; requestContext: RequestContext },
+): Promise<void> {
+  const { c, spec, requestContext } = input;
+  return validateAgentSpec({
+    spec,
+    tenant_id: requestContext.tenant_id,
+    created_by_subject_id: requestContext.subject.id,
+    modelProviderStore: deps.resolveModelProviderStore({ c, allowInlineResources: true }),
+    mcpServerStore: deps.resolveMcpServerStore({ c, allowInlineResources: true }),
+    skillStore: deps.resolveSkillStore({ c, allowInlineResources: true }),
+    sandboxProviderStore: deps.resolveSandboxProviderStore(c),
+    sandboxEnvironmentStore: deps.sandboxEnvironmentStore,
+    webSearchProviderStore: deps.resolveWebSearchProviderStore(c),
+  });
 }
 
 type InternalSessionsRouterDeps = Pick<
@@ -141,16 +173,10 @@ function createGetOrCreateSessionByExternalIdHandler(
       }
       agent = { type: 'reference', id: named.id, name: named.name };
     } else {
-      await validateAgentSpec({
+      await validateInlineSessionSpec(deps, {
+        c,
         spec: body.agent.spec,
-        tenant_id: requestContext.tenant_id,
-        created_by_subject_id: requestContext.subject.id,
-        modelProviderStore: deps.resolveModelProviderStore(c),
-        mcpServerStore: deps.resolveMcpServerStore(c),
-        skillStore: deps.resolveSkillStore(c),
-        sandboxProviderStore: deps.resolveSandboxProviderStore(c),
-        sandboxEnvironmentStore: deps.sandboxEnvironmentStore,
-        webSearchProviderStore: deps.resolveWebSearchProviderStore(c),
+        requestContext,
       });
       agent = { type: 'inline', spec: body.agent.spec };
     }
@@ -216,16 +242,10 @@ export function createSessionsRouter(deps: SessionsRouterDeps) {
       return c.json({ data: toWireSession(session.record) }, 201);
     }
 
-    await validateAgentSpec({
+    await validateInlineSessionSpec(deps, {
+      c,
       spec: body.agent.spec,
-      tenant_id: requestContext.tenant_id,
-      created_by_subject_id: requestContext.subject.id,
-      modelProviderStore: deps.resolveModelProviderStore(c),
-      mcpServerStore: deps.resolveMcpServerStore(c),
-      skillStore: deps.resolveSkillStore(c),
-      sandboxProviderStore: deps.resolveSandboxProviderStore(c),
-      sandboxEnvironmentStore: deps.sandboxEnvironmentStore,
-      webSearchProviderStore: deps.resolveWebSearchProviderStore(c),
+      requestContext,
     });
     const session = await deps.sessions.create({
       tenant_id: requestContext.tenant_id,
@@ -310,17 +330,25 @@ export function createSessionsRouter(deps: SessionsRouterDeps) {
     // Inline sessions may replace their agent; named (reference) sessions
     // cannot — the store rejects that with SessionStoreInvariantError → 422 below.
     if (body.agent !== undefined) {
-      await validateAgentSpec({
-        spec: body.agent.spec,
-        tenant_id: requestContext.tenant_id,
-        created_by_subject_id: requestContext.subject.id,
-        modelProviderStore: deps.resolveModelProviderStore(c),
-        mcpServerStore: deps.resolveMcpServerStore(c),
-        skillStore: deps.resolveSkillStore(c),
-        sandboxProviderStore: deps.resolveSandboxProviderStore(c),
-        sandboxEnvironmentStore: deps.sandboxEnvironmentStore,
-        webSearchProviderStore: deps.resolveWebSearchProviderStore(c),
-      });
+      if (existing.agent.type === 'inline') {
+        await validateInlineSessionSpec(deps, {
+          c,
+          spec: body.agent.spec,
+          requestContext,
+        });
+      } else {
+        await validateAgentSpec({
+          spec: body.agent.spec,
+          tenant_id: requestContext.tenant_id,
+          created_by_subject_id: requestContext.subject.id,
+          modelProviderStore: deps.resolveModelProviderStore({ c }),
+          mcpServerStore: deps.resolveMcpServerStore({ c }),
+          skillStore: deps.resolveSkillStore({ c }),
+          sandboxProviderStore: deps.resolveSandboxProviderStore(c),
+          sandboxEnvironmentStore: deps.sandboxEnvironmentStore,
+          webSearchProviderStore: deps.resolveWebSearchProviderStore(c),
+        });
+      }
     }
     try {
       await deps.sessionStore.updateSession({
@@ -336,7 +364,7 @@ export function createSessionsRouter(deps: SessionsRouterDeps) {
         return c.json({ error: { message: `Session not found: ${sessionId}` } }, 404);
       }
       if (error instanceof SessionStoreInvariantError) {
-        return c.json({ error: { message: error.message } }, 422);
+        throw new HTTPException(422, { message: error.message, cause: error });
       }
       throw error;
     }
@@ -380,7 +408,7 @@ export function createSessionsRouter(deps: SessionsRouterDeps) {
       return c.json({ data: data.map(toWireSession), pagination }, 200);
     } catch (error) {
       if (error instanceof SessionStoreConflictError) {
-        return c.json({ error: { message: error.message } }, 400);
+        throw new HTTPException(400, { message: error.message, cause: error });
       }
       throw error;
     }
@@ -444,7 +472,7 @@ export function createSessionsRouter(deps: SessionsRouterDeps) {
       return c.json({ data, pagination }, 200);
     } catch (error) {
       if (error instanceof SessionStoreConflictError) {
-        return c.json({ error: { message: error.message } }, 400);
+        throw new HTTPException(400, { message: error.message, cause: error });
       }
       if (error instanceof SessionStoreNotFoundError) {
         return c.json({ error: { message: error.message } }, 404);

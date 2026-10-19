@@ -42,7 +42,7 @@ import {
 } from './foldPeerThreads.js';
 import { drainListPages } from './listPages.js';
 import { buildMcpAuthTextParts, mcpAuthAssistantStatus, mcpAuthMessageCustom } from './mcpAuth.js';
-import { MESSAGE_CUSTOM_KEY } from './messageCustomMetadata.js';
+import { CANCELLATION_REASON_CUSTOM_KEY, MESSAGE_CUSTOM_KEY } from './messageCustomMetadata.js';
 import type { AssistantContentPart } from './modelMessageContent.js';
 import { extractImageUrlFromUserContentItem, imageUrlToAttachment } from './modelMessageImageContent.js';
 import {
@@ -83,6 +83,8 @@ const MESSAGE_ID_SUFFIX = {
   ASSISTANT: '-assistant',
   USER: '-user',
 } as const;
+
+export { CANCELLATION_REASON_CUSTOM_KEY } from './messageCustomMetadata.js';
 
 /**
  * Turn / event → assistant-ui normalization
@@ -354,6 +356,8 @@ function cloneThreadBucket(bucket: ThreadBucket): ThreadBucket {
     approvalDecisions: new Map(bucket.approvalDecisions),
     pendingResponses: new Map(bucket.pendingResponses),
     done: bucket.done,
+    // Keep sub-agent failure text so a cloned bucket still shows as failed.
+    ...(bucket.error != null ? { error: bucket.error } : {}),
     ...(bucket.title != null ? { title: bucket.title } : {}),
     ...(bucket.agentInfo != null ? { agentInfo: bucket.agentInfo } : {}),
   };
@@ -385,6 +389,10 @@ export function prependFoldState(older: PeerThreadFoldState, newer: PeerThreadFo
       approvalDecisions: new Map([...olderBucket.approvalDecisions, ...newerBucket.approvalDecisions]),
       pendingResponses: new Map([...olderBucket.pendingResponses, ...newerBucket.pendingResponses]),
       done: newerBucket.done || olderBucket.done,
+      // Prefer the newer failure text; if only the older turn failed, keep that.
+      ...(newerBucket.error != null || olderBucket.error != null
+        ? { error: newerBucket.error ?? olderBucket.error }
+        : {}),
       ...(newerBucket.title != null || olderBucket.title != null
         ? { title: newerBucket.title ?? olderBucket.title }
         : {}),
@@ -807,6 +815,32 @@ function assistantStatusFromTurnState(state: Turn['state']): MessageStatus {
   }
 }
 
+/**
+ * Cancelled-turn UI flow (chat + session detail share this projection):
+ *
+ * Example: turn.done { status: "cancelled", reason: "abandoned" } with no model
+ * text. Without special handling the chat would show only the user bubble.
+ *
+ * 1. Live SSE — streamTurnEvents yields status cancelled +
+ *    metadata.cancellationReason = "abandoned" (no synthetic text part).
+ * 2. Commit — commitActiveStream reads that key, stores TurnStateCancelled on
+ *    the turn record (not a fake "done"), then clears activeStream.
+ * 3. History / reload — projectHistoryTurns sees state.cancelled, puts the wire
+ *    reason on metadata.custom, and always emits an assistant row even when the
+ *    fold has no model.message parts. trueforge-ui renders the orange banner.
+ *
+ * assistant-ui MessageStatus only knows reason: "cancelled" (no wire reason),
+ * so the human-readable reason lives on metadata.custom.cancellationReason.
+ */
+
+/**
+ * Normal turns only get an assistant bubble when the model produced content.
+ * Cancelled/error turns still need a bubble so the banner/error chrome can show.
+ */
+function shouldEmitTerminalAssistant(state: Turn['state'], content: readonly AssistantContentPart[]): boolean {
+  return content.length > 0 || state.status === TURN_STATUS.CANCELLED || state.status === TURN_STATUS.ERROR;
+}
+
 function resolveCreatedAt(
   messageId: string,
   fallback: Date,
@@ -1040,31 +1074,46 @@ function buildTurnUpdateFromFold(
   turn: Pick<Turn, 'state'> & { pendingMcpAuth?: McpAuthRequiredEvent | undefined },
   rootModelMessageIds: readonly string[],
 ): TurnStreamUpdate {
-  const content = buildRootAssistantContentForIds(foldState, rootModelMessageIds);
-  if (turn.pendingMcpAuth != null) {
-    return {
-      content: [...content, ...buildMcpAuthTextParts(turn.pendingMcpAuth.mcpServers)],
-      status: mcpAuthAssistantStatus(),
-      metadata: { custom: mcpAuthMessageCustom(turn.pendingMcpAuth.mcpServers) },
-    };
+  // While we build this turn's messages, tell nested sub-agents that the parent
+  // already ended (cancelled/error) so they do not stay stuck as "running".
+  // Restore afterward so the flag does not leak into the next turn.
+  const previousParentTerminal = foldState.parentTerminalStatus;
+  if (turn.state.status === TURN_STATUS.CANCELLED) {
+    foldState.parentTerminalStatus = 'cancelled';
+  } else if (turn.state.status === TURN_STATUS.ERROR) {
+    foldState.parentTerminalStatus = 'error';
+  } else {
+    foldState.parentTerminalStatus = undefined;
   }
-  let update: TurnStreamUpdate = { content };
-  update = appendMcpAuthToTurnContent(update.content, turn);
-  update = appendToolApprovalToTurnContent(update, turn);
-  if (turn.state.status === TURN_STATUS.PAUSED && update.status == null) {
-    const approvalThreadId = findFirstPendingApprovalThreadId(foldState);
-    const responseThreadId = findFirstPendingResponseThreadId(foldState);
-    const custom = {
-      ...(approvalThreadId != null ? toolApprovalMessageCustom(approvalThreadId) : {}),
-      ...(responseThreadId != null ? toolResponseMessageCustom(responseThreadId) : {}),
-    };
-    update = {
-      content,
-      status: approvalThreadId != null ? toolApprovalStatus() : toolResponseStatus(),
-      metadata: { custom },
-    };
+  try {
+    const content = buildRootAssistantContentForIds(foldState, rootModelMessageIds);
+    if (turn.pendingMcpAuth != null) {
+      return {
+        content: [...content, ...buildMcpAuthTextParts(turn.pendingMcpAuth.mcpServers)],
+        status: mcpAuthAssistantStatus(),
+        metadata: { custom: mcpAuthMessageCustom(turn.pendingMcpAuth.mcpServers) },
+      };
+    }
+    let update: TurnStreamUpdate = { content };
+    update = appendMcpAuthToTurnContent(update.content, turn);
+    update = appendToolApprovalToTurnContent(update, turn);
+    if (turn.state.status === TURN_STATUS.PAUSED && update.status == null) {
+      const approvalThreadId = findFirstPendingApprovalThreadId(foldState);
+      const responseThreadId = findFirstPendingResponseThreadId(foldState);
+      const custom = {
+        ...(approvalThreadId != null ? toolApprovalMessageCustom(approvalThreadId) : {}),
+        ...(responseThreadId != null ? toolResponseMessageCustom(responseThreadId) : {}),
+      };
+      update = {
+        content,
+        status: approvalThreadId != null ? toolApprovalStatus() : toolResponseStatus(),
+        metadata: { custom },
+      };
+    }
+    return update;
+  } finally {
+    foldState.parentTerminalStatus = previousParentTerminal;
   }
-  return update;
 }
 
 function contentHasPendingRequiredActions(content: readonly AssistantContentPart[]): boolean {
@@ -1330,6 +1379,9 @@ function projectHistoryTurns(snapshot: SessionSnapshot, options?: ProjectSession
       ...baseCustom,
       [MESSAGE_CUSTOM_KEY.TURN_ID]: record.id,
       ...(sandboxId != null ? { [MESSAGE_CUSTOM_KEY.SANDBOX_ID]: sandboxId } : {}),
+      ...(record.state.status === TURN_STATUS.CANCELLED
+        ? { [CANCELLATION_REASON_CUSTOM_KEY]: record.state.reason }
+        : {}),
     };
     const assistantCreatedAt =
       record.state.status === TURN_STATUS.RUNNING
@@ -1359,7 +1411,8 @@ function projectHistoryTurns(snapshot: SessionSnapshot, options?: ProjectSession
         break;
       }
 
-      if (content.length > 0) {
+      // Includes empty cancelled/error turns so the terminal state is visible.
+      if (shouldEmitTerminalAssistant(record.state, content)) {
         messages.push(
           buildAssistantMessage(
             record.id,
@@ -1372,8 +1425,12 @@ function projectHistoryTurns(snapshot: SessionSnapshot, options?: ProjectSession
           ),
         );
         lastAssistantIndex = messages.length - 1;
+      } else {
+        // New user group with no assistant of its own — do not let a later empty
+        // cancelled/error continuation fold into a prior group's assistant.
+        lastAssistantIndex = undefined;
       }
-    } else if (content.length > 0 && lastAssistantIndex != null) {
+    } else if (shouldEmitTerminalAssistant(record.state, content) && lastAssistantIndex != null) {
       if (record.state.status === TURN_STATUS.RUNNING) {
         break;
       }
@@ -1895,6 +1952,27 @@ export async function* streamTurnEvents(
     }
 
     if (event.type === EVENT_TYPE.TURN_DONE) {
+      // Live cancel: stash wire reason for UI banner and mark open sub-agents cancelled.
+      if (event.state.status === TURN_STATUS.CANCELLED) {
+        const ids =
+          groupRootBaseline != null
+            ? rootModelMessageIdsSinceBaseline(foldState, groupRootBaseline)
+            : (foldState.threads.get(ROOT_THREAD_ID)?.modelMessageIds ?? []);
+        const previousParentTerminal = foldState.parentTerminalStatus;
+        foldState.parentTerminalStatus = 'cancelled';
+        try {
+          yield withSandbox({
+            content: buildRootAssistantContentForIds(foldState, ids),
+            status: assistantStatusFromTurnState(event.state),
+            metadata: { custom: { [CANCELLATION_REASON_CUSTOM_KEY]: event.state.reason } },
+            sequenceNumber: data.sequenceNumber,
+            turnState: event.state,
+          });
+        } finally {
+          foldState.parentTerminalStatus = previousParentTerminal;
+        }
+        return;
+      }
       // turn.done is the only successful terminal boundary. Do not wait for
       // the transport body to close because resumable subscriptions may linger.
       // Yield error/complete state (HITL) rather than throwing — reconnect must

@@ -24,6 +24,7 @@ import { GetStartedScreen } from './GetStartedScreen';
 import { LogoutButton } from './LogoutButton';
 import { NewAgentWelcomeScreen } from './NewAgentWelcomeScreen';
 import { API_BASE_URL, uiRouterBasename } from './publicPath';
+import { RegisterSkillsLink } from './RegisterSkillsLink';
 
 const POSTHOG_API_KEY = import.meta.env.VITE_POSTHOG_API_KEY;
 const POSTHOG_HOST = import.meta.env.VITE_POSTHOG_HOST ?? 'https://us.i.posthog.com';
@@ -41,14 +42,6 @@ function initAnalytics(): void {
 }
 
 initAnalytics();
-
-const hostAnalytics: AnalyticsConfig | undefined = POSTHOG_API_KEY
-  ? {
-      track: (eventName, data) => {
-        posthog.capture(eventName, data);
-      },
-    }
-  : undefined;
 
 /** Shared cookie/OIDC fetch for boot helpers and `<TrueForgeUI server />`. */
 const authAwareFetch = createAuthAwareFetch();
@@ -179,9 +172,28 @@ export function App() {
   }, [session]);
 
   const overrides: SlotOverrides = useMemo(
-    () => ({ ShellActionsActionSlot: LogoutButton, WelcomeScreen: NewAgentWelcomeScreen }),
+    () => ({
+      ShellActionsActionSlot: LogoutButton,
+      WelcomeScreen: NewAgentWelcomeScreen,
+      AgentSkillsHeaderActionSlot: RegisterSkillsLink,
+    }),
     [],
   );
+
+  const hostAnalytics = useMemo((): AnalyticsConfig | undefined => {
+    if (!POSTHOG_API_KEY || session.status !== 'authenticated') {
+      return undefined;
+    }
+    const { tenantId } = session;
+    return {
+      track: (eventName, data) => {
+        posthog.capture(eventName, {
+          tenant: tenantId,
+          ...data,
+        });
+      },
+    };
+  }, [session]);
 
   const authErrorReason = shouldShowAuthErrorScreen({ authError, session });
   if (authErrorReason != null) {
@@ -242,7 +254,7 @@ export function App() {
           defaultAgentSpec: boot.defaultAgentSpec,
         }}
         initialSettingsOpen={boot.openSettings}
-        currentUser={{ displayName: session.displayName }}
+        currentUser={{ subjectId: session.subjectId, displayName: session.displayName }}
         overrides={overrides}
         theme={appTheme}
         className="app-assistant"
