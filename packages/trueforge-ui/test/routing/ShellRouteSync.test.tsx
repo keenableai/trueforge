@@ -2,7 +2,7 @@
 import { act, render, waitFor } from '@testing-library/react';
 import { StrictMode, useEffect, useState, type ReactNode } from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { resolveRoutesConfig } from '@/routing/paths.js';
 import { ShellRouteSync } from '@/routing/ShellRouteSync.js';
@@ -108,7 +108,6 @@ function Harness({
   includeSchedules = false,
   includeEnvironments = false,
   getSession,
-  onError,
 }: {
   agentConfig?: AgentConfig;
   initialRemoteId?: string;
@@ -127,7 +126,6 @@ function Harness({
     updatedAt: string;
     agentName?: string;
   }>;
-  onError?: (error: unknown) => void;
 }) {
   const [remoteId, setId] = useState<string | undefined>(initialRemoteId);
   setRemoteId = setId;
@@ -144,12 +142,7 @@ function Harness({
       <ShellModeProvider agentConfig={agentConfig} initialSettingsOpen={initialSettingsOpen}>
         <CaptureShell />
         <CaptureLocation />
-        <ShellRouteSync
-          routes={routes}
-          activeRemoteId={remoteId}
-          initialSettingsOpen={initialSettingsOpen}
-          onError={onError}
-        />
+        <ShellRouteSync routes={routes} activeRemoteId={remoteId} initialSettingsOpen={initialSettingsOpen} />
       </ShellModeProvider>
     </SettingsCatalogProvider>
   );
@@ -173,7 +166,6 @@ function renderSync(opts: {
     updatedAt: string;
     agentName?: string;
   }>;
-  onError?: (error: unknown) => void;
   strict?: boolean;
 }) {
   const tree = (
@@ -188,7 +180,6 @@ function renderSync(opts: {
         includeSchedules={opts.includeSchedules}
         includeEnvironments={opts.includeEnvironments}
         getSession={opts.getSession}
-        onError={opts.onError}
       />
     </MemoryRouter>
   );
@@ -202,8 +193,7 @@ describe('ShellRouteSync', () => {
     expect(pathname).toBe('/sessions/abc');
   });
 
-  it('toasts and redirects to New Chat when a session deep link is forbidden', async () => {
-    const onError = vi.fn();
+  it('keeps the session URL and surfaces a pane error when a deep link is forbidden', async () => {
     const forbidden = Object.assign(new Error('Only the session creator can access this session'), {
       statusCode: 403,
     });
@@ -212,38 +202,29 @@ describe('ShellRouteSync', () => {
       getSession: async () => {
         throw forbidden;
       },
-      onError,
     });
 
     await waitFor(() => {
-      expect(onError).toHaveBeenCalledOnce();
+      expect(shell.sessionAccessError).toBe('Only the session creator can access this session');
     });
-    expect(onError).toHaveBeenCalledWith(forbidden);
-    await waitFor(() => {
-      expect(pathname).toBe('/');
-    });
-    expect(shell.pendingSessionId).toBeUndefined();
+    expect(shell.pendingSessionId).toBe('forbidden');
+    expect(pathname).toBe('/sessions/forbidden');
   });
 
-  it('toasts and redirects to New Chat when a session deep link is not found', async () => {
-    const onError = vi.fn();
+  it('keeps the session URL and surfaces a pane error when a deep link is not found', async () => {
     const notFound = Object.assign(new Error('Session not found: missing'), { statusCode: 404 });
     renderSync({
       initialEntries: ['/sessions/missing'],
       getSession: async () => {
         throw notFound;
       },
-      onError,
     });
 
     await waitFor(() => {
-      expect(onError).toHaveBeenCalledOnce();
+      expect(shell.sessionAccessError).toBe('Session not found: missing');
     });
-    expect(onError).toHaveBeenCalledWith(notFound);
-    await waitFor(() => {
-      expect(pathname).toBe('/');
-    });
-    expect(shell.pendingSessionId).toBeUndefined();
+    expect(shell.pendingSessionId).toBe('missing');
+    expect(pathname).toBe('/sessions/missing');
   });
 
   it('applies an agent deep link on boot and resolves its history filter id', async () => {
