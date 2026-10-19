@@ -180,13 +180,23 @@ export async function deliverTurnEvents(input: {
       if (!handle) {
         continue;
       }
-      return applyTurnEvents({
-        handle,
-        events: input.events,
-        sessionStore: input.sessionStore,
-        sessionId,
-        turnId: input.turnId,
-      });
+      // Drop the pause timer before wake. If it fired while this handler held the lock,
+      // the callback sees the timer was replaced and does not offload. A send that leaves
+      // the turn paused rearms; a later `running` update clears that timer from the drain.
+      input.activeTurns.clearPausedKeepalive({ sessionId, turnId: input.turnId });
+      try {
+        return await applyTurnEvents({
+          handle,
+          events: input.events,
+          sessionStore: input.sessionStore,
+          sessionId,
+          turnId: input.turnId,
+        });
+      } finally {
+        if (handle.state.status === 'paused') {
+          input.activeTurns.armPausedKeepalive({ sessionId, turnId: input.turnId });
+        }
+      }
     }
 
     if (action === TurnOwnershipAction.Rebuild || action === TurnOwnershipAction.Steal) {

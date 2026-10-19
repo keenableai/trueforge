@@ -680,6 +680,12 @@ async function resumePausedTurn(input: {
         stream: turn.stream(),
         turn,
       });
+      // Resume starts execute already paused, so no new paused `turn.update` is yielded
+      // unless the turn runs and pauses again. Arm here or this run never offloads.
+      input.deps.activeTurns.armPausedKeepalive({
+        sessionId: input.session.session_id,
+        turnId: turn.id,
+      });
       void drainTurnEvents({
         trackedStream,
         turnEventStream,

@@ -20,9 +20,12 @@ function activeTurnKey(sessionId: string, turnId: string): string {
   return `${sessionId}:${turnId}`;
 }
 
-/** A test double may omit `state`. A real handle always has it. */
+/**
+ * `state` is a getter on TurnHandle's prototype, so it is not an own property.
+ * A test double may omit it; that run is not treated as paused.
+ */
 function isPausedRun(run: ActiveTurnRun | undefined): run is ActiveTurnRun {
-  if (!run || !Object.hasOwn(run.turn, 'state')) {
+  if (!run || !('state' in run.turn)) {
     return false;
   }
   return run.turn.state.status === 'paused';
@@ -170,8 +173,12 @@ export class ActiveTurnRegistry {
     }
     const key = activeTurnKey(input.sessionId, input.turnId);
     const timer = setTimeout(() => {
-      this.keepaliveTimers.delete(key);
       void this.withTurnLock(input, async () => {
+        // A send may have cleared or replaced this timer while the callback waited for the lock.
+        if (this.keepaliveTimers.get(key) !== timer) {
+          return;
+        }
+        this.keepaliveTimers.delete(key);
         const run = this.runs.get(key);
         if (!isPausedRun(run)) {
           return;
