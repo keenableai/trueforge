@@ -1,4 +1,4 @@
-import type { SessionMetrics } from '@truefoundry/trueforge-core/agent-session';
+import type { SessionLastTurnDetails, SessionMetrics } from '@truefoundry/trueforge-core/agent-session';
 import type { TurnRecord, TurnSnapshot } from '@truefoundry/trueforge-core/agent-session/models/TurnRecord';
 import {
   isNonTerminalTurnState,
@@ -117,6 +117,24 @@ export interface ListTurnsResult {
 }
 
 type DbOrTrx = Kysely<Database> | Transaction<Database>;
+
+function lastTurnDetails(input: { turn_id: string; state: TurnState }): RawBuilder<string> {
+  const details: SessionLastTurnDetails = { id: input.turn_id, status: input.state.status };
+  return jsonbBind(details);
+}
+
+/** Same tx as the turn flip; a turn superseded by a newer last turn matches no row. */
+async function updateLastTurnDetails(
+  trx: Transaction<Database>,
+  input: { session_id: string; turn_id: string; state: TurnState },
+): Promise<void> {
+  await trx
+    .updateTable('session')
+    .set({ last_turn_details: lastTurnDetails(input) })
+    .where('session_id', '=', input.session_id)
+    .where(sql<boolean>`json_extract(last_turn_details, '$.id') = ${input.turn_id}`)
+    .execute();
+}
 
 /** Same tx as the turn flip; BEGIN IMMEDIATE serializes concurrent terminal folds. */
 async function addSessionCostAndDuration(
@@ -373,6 +391,7 @@ export async function createTurn(db: Kysely<Database>, input: CreateTurnInput): 
         .updateTable('session')
         .set({
           last_turn_id: input.turn.turn_id,
+          last_turn_details: lastTurnDetails({ turn_id: input.turn.turn_id, state: input.turn.state }),
           updated_at: nowIso(),
           last_activity_timestamp_ms: input.last_activity_timestamp_ms,
           // total_turns rides the same tip UPDATE so a later failure in this tx rolls it back.
@@ -739,6 +758,11 @@ export async function freezeAndGetTurn(db: Kysely<Database>, input: FreezeAndGet
         turn_created_at: new Date(updateResult.created_at),
         turn_state: cancelledState,
       });
+      await updateLastTurnDetails(trx, {
+        session_id: input.session_id,
+        turn_id: input.turn_id,
+        state: cancelledState,
+      });
     }
 
     const record = await assembleTurnRecord(trx, input);
@@ -858,6 +882,8 @@ export async function updateTurnNonTerminalState(
         created_at: input.turn_update_event.created_at,
       })
       .execute();
+
+    await updateLastTurnDetails(trx, input);
   });
 }
 
@@ -898,6 +924,7 @@ export async function updateTurnTerminalState(
       turn_created_at: new Date(result.created_at),
       turn_state: input.state,
     });
+    await updateLastTurnDetails(trx, input);
 
     await trx
       .insertInto('session_event')

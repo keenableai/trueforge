@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { MAIN_THREAD_ID } from '../../../src/agent-session/models/TurnRecord';
 import type { PersistedTurnEvent } from '../../../src/agent-session/schemas/events';
 import { EventType } from '../../../src/agent-session/schemas/events';
-import { CancellationReason } from '../../../src/agent-session/schemas/turn';
+import { CancellationReason, type NonTerminalTurnState } from '../../../src/agent-session/schemas/turn';
 import type { ISessionStore } from '../../../src/agent-session/store/ISessionStore';
 import { decodeSessionEventPageToken } from '../../../src/agent-session/store/SessionEventPageToken';
 import {
@@ -1372,6 +1372,89 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
         source_id: 'missing-sched',
       });
       expect(unmatched.data).toEqual([]);
+    });
+  });
+
+  describe('last_turn_details', () => {
+    async function lastTurnDetails(store: ISessionStore) {
+      return mustGet(await store.getSession({ tenant_id: tenant, session_id: sessionId })).last_turn_details;
+    }
+
+    async function setNonTerminalState(store: ISessionStore, turnId: string, state: NonTerminalTurnState) {
+      await store.updateTurnNonTerminalState({
+        session_id: sessionId,
+        turn_id: turnId,
+        state,
+        turn_update_event: makeTurnUpdateEvent(state),
+      });
+    }
+
+    async function freezeTurn(store: ISessionStore, turnId: string) {
+      await store.freezeAndGetTurn({
+        session_id: sessionId,
+        turn_id: turnId,
+        reason: CancellationReason.ClientCancelled,
+        turn_done_event: makeTurnDoneEvent(makeCancelledTurnState(CancellationReason.ClientCancelled)),
+      });
+    }
+
+    it('is null before the first turn', async () => {
+      const store = createStore();
+      await seedSession(store);
+      expect(await lastTurnDetails(store)).toBeNull();
+    });
+
+    it('createTurn sets id and running status with last_turn_id', async () => {
+      const store = createStore();
+      await seedSession(store);
+      await store.createTurn(makeCreateTurnInput({ sessionId, turnId: 'turn-1' }));
+      const session = mustGet(await store.getSession({ tenant_id: tenant, session_id: sessionId }));
+      expect(session.last_turn_details).toEqual({ id: 'turn-1', status: 'running' });
+      expect(session.last_turn_id).toBe('turn-1');
+    });
+
+    it('follows pause, resume, and terminal transitions of the last turn', async () => {
+      const store = createStore();
+      await seedSession(store);
+      await store.createTurn(makeCreateTurnInput({ sessionId, turnId: 'turn-1' }));
+
+      await setNonTerminalState(store, 'turn-1', makePausedTurnState());
+      expect(await lastTurnDetails(store)).toEqual({ id: 'turn-1', status: 'paused' });
+
+      await setNonTerminalState(store, 'turn-1', { status: 'running' });
+      expect(await lastTurnDetails(store)).toEqual({ id: 'turn-1', status: 'running' });
+
+      await finishTurn(store, 'turn-1');
+      expect(await lastTurnDetails(store)).toEqual({ id: 'turn-1', status: 'done' });
+    });
+
+    it('freezeAndGetTurn records cancelled, and a repeat freeze leaves it unchanged', async () => {
+      const store = createStore();
+      await seedSession(store);
+      await store.createTurn(makeCreateTurnInput({ sessionId, turnId: 'turn-1' }));
+      await freezeTurn(store, 'turn-1');
+      expect(await lastTurnDetails(store)).toEqual({ id: 'turn-1', status: 'cancelled' });
+      await freezeTurn(store, 'turn-1');
+      expect(await lastTurnDetails(store)).toEqual({ id: 'turn-1', status: 'cancelled' });
+    });
+
+    it('a superseded turn changing status does not touch the newer last turn', async () => {
+      const store = createStore();
+      await seedSession(store);
+      await store.createTurn(makeCreateTurnInput({ sessionId, turnId: 'turn-1' }));
+      await store.createTurn(makeCreateTurnInput({ sessionId, turnId: 'turn-2' }));
+      const expected = { id: 'turn-2', status: 'running' };
+      expect(await lastTurnDetails(store)).toEqual(expected);
+
+      await setNonTerminalState(store, 'turn-1', makePausedTurnState());
+      expect(await lastTurnDetails(store)).toEqual(expected);
+
+      await finishTurn(store, 'turn-1');
+      expect(await lastTurnDetails(store)).toEqual(expected);
+
+      await store.createTurn(makeCreateTurnInput({ sessionId, turnId: 'turn-3' }));
+      await freezeTurn(store, 'turn-2');
+      expect(await lastTurnDetails(store)).toEqual({ id: 'turn-3', status: 'running' });
     });
   });
 

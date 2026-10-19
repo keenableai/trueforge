@@ -4,7 +4,12 @@ import type { SessionRecord } from '../models/SessionRecord';
 import type { TurnRecord, TurnSnapshot } from '../models/TurnRecord';
 import type { PersistedTurnEvent, SessionEventItem } from '../schemas/events';
 import type { TokenPagination } from '../schemas/pagination';
-import { isNonTerminalTurnState, type TerminalTurnState, type TurnInboundEventItem } from '../schemas/turn';
+import {
+  isNonTerminalTurnState,
+  type TerminalTurnState,
+  type TurnInboundEventItem,
+  type TurnState,
+} from '../schemas/turn';
 import { assertCreateTurnThreadDelta } from './assertCreateTurnThreadDelta';
 import type {
   AddThreadsInput,
@@ -209,6 +214,7 @@ export class InMemorySessionStore<
       title: null,
       shared: false,
       last_turn_id: null,
+      last_turn_details: null,
       external_id: externalId,
       source: input.source !== null ? deepCopy(input.source) : null,
       created_at: now,
@@ -425,6 +431,7 @@ export class InMemorySessionStore<
     this.events.set(tKey, []);
     stored.turnIds.push(input.turn.turn_id);
     stored.record.last_turn_id = input.turn.turn_id;
+    stored.record.last_turn_details = { id: input.turn.turn_id, status: input.turn.state.status };
     stored.record.metrics.total_turns += 1;
     stored.record.last_activity_timestamp_ms = Date.now();
     stored.record.updated_at = new Date();
@@ -450,6 +457,7 @@ export class InMemorySessionStore<
         list.push(deepCopy(input.turn_done_event));
       }
       this.addTerminalSessionMetrics(input.session_id, turn.created_at, cancelledState);
+      this.updateLastTurnDetails({ session_id: input.session_id, turn_id: input.turn_id, state: cancelledState });
     }
 
     return deepCopy(turn);
@@ -499,6 +507,7 @@ export class InMemorySessionStore<
     turn.state = deepCopy(input.state);
     turn.updated_at = new Date();
     list.push(deepCopy(input.turn_update_event));
+    this.updateLastTurnDetails(input);
   }
 
   async updateTurnTerminalState(input: UpdateTurnTerminalStateInput): Promise<void> {
@@ -515,6 +524,7 @@ export class InMemorySessionStore<
     turn.updated_at = new Date();
     list.push(deepCopy(input.turn_done_event));
     this.addTerminalSessionMetrics(input.session_id, turn.created_at, input.state);
+    this.updateLastTurnDetails(input);
   }
 
   async appendToEvents(input: AppendToEventsInput): Promise<void> {
@@ -560,6 +570,15 @@ export class InMemorySessionStore<
         consumed: false,
       });
     }
+  }
+
+  /** A turn superseded by a newer last turn leaves that turn's document alone. */
+  private updateLastTurnDetails(input: { session_id: string; turn_id: string; state: TurnState }): void {
+    const stored = this.sessions.get(sessionKey(input.session_id));
+    if (stored?.record.last_turn_details?.id !== input.turn_id) {
+      return;
+    }
+    stored.record.last_turn_details = { id: input.turn_id, status: input.state.status };
   }
 
   /** Cost from turn metrics when present; duration is completed_at − created_at, floored at 0. */
