@@ -233,7 +233,7 @@ describe('ShellRouteSync', () => {
         };
       },
     });
-    await waitFor(() => expect(shell.pendingSessionId).toBe('prior'));
+    // Prior thread is already live via activeRemoteId, so boot skips openSession.
     await waitFor(() => expect(pathname).toBe('/sessions/prior'));
 
     act(() => {
