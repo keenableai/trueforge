@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, render, waitFor } from '@testing-library/react';
 import { StrictMode, useEffect, useState, type ReactNode } from 'react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigate, type NavigateFunction } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
 import { resolveRoutesConfig } from '@/routing/paths.js';
@@ -24,6 +24,7 @@ let shell: Shell;
 let pathname = '';
 let search = '';
 let setRemoteId: (id: string | undefined) => void = () => undefined;
+let navigateApp: NavigateFunction = () => undefined;
 
 function CaptureShell() {
   shell = useShellMode();
@@ -32,8 +33,10 @@ function CaptureShell() {
 
 function CaptureLocation() {
   const location = useLocation();
+  const navigate = useNavigate();
   pathname = location.pathname;
   search = location.search;
+  navigateApp = navigate;
   useEffect(() => {
     pathname = location.pathname;
     search = location.search;
@@ -151,6 +154,7 @@ function Harness({
 function renderSync(opts: {
   initialEntries?: string[];
   agentConfig?: AgentConfig;
+  initialRemoteId?: string;
   initialSettingsOpen?: boolean;
   settingsEnabled?: boolean;
   capabilitiesFail?: boolean;
@@ -172,6 +176,7 @@ function renderSync(opts: {
     <MemoryRouter initialEntries={opts.initialEntries ?? ['/']}>
       <Harness
         agentConfig={opts.agentConfig}
+        initialRemoteId={opts.initialRemoteId}
         initialSettingsOpen={opts.initialSettingsOpen}
         settingsEnabled={opts.settingsEnabled}
         capabilitiesFail={opts.capabilitiesFail}
@@ -209,6 +214,98 @@ describe('ShellRouteSync', () => {
     });
     expect(shell.pendingSessionId).toBe('forbidden');
     expect(pathname).toBe('/sessions/forbidden');
+  });
+
+  it('keeps the inaccessible deep-link URL even when a prior thread remote id is still live', async () => {
+    renderSync({
+      initialEntries: ['/sessions/prior'],
+      initialRemoteId: 'prior',
+      getSession: async ({ sessionId }) => {
+        if (sessionId === 'forbidden') {
+          throw Object.assign(new Error('Only the session creator can access this session'), { statusCode: 403 });
+        }
+        return {
+          id: sessionId,
+          title: 'Session',
+          isMutable: true,
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        };
+      },
+    });
+    await waitFor(() => expect(shell.pendingSessionId).toBe('prior'));
+    await waitFor(() => expect(pathname).toBe('/sessions/prior'));
+
+    act(() => {
+      navigateApp('/sessions/forbidden');
+    });
+
+    await waitFor(() => {
+      expect(shell.sessionAccessError).toBe('Only the session creator can access this session');
+    });
+    expect(shell.pendingSessionId).toBe('forbidden');
+    // Must not snap back to the prior live thread while the error pane is showing.
+    await waitFor(() => expect(pathname).toBe('/sessions/forbidden'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(pathname).toBe('/sessions/forbidden');
+  });
+
+  it('releases the boot URL wait when a superseded session load fails', async () => {
+    const resolvers = new Map<
+      string,
+      {
+        resolve: (value: {
+          id: string;
+          title: string;
+          isMutable: boolean;
+          createdAt: string;
+          updatedAt: string;
+        }) => void;
+        reject: (error: unknown) => void;
+      }
+    >();
+    renderSync({
+      initialEntries: ['/sessions/boot'],
+      getSession: ({ sessionId }) =>
+        new Promise((resolve, reject) => {
+          resolvers.set(sessionId, { resolve, reject });
+        }),
+    });
+    await waitFor(() => expect(resolvers.has('boot')).toBe(true));
+
+    // URL→shell opens another session while boot is still in flight (requestedSessionRef moves).
+    act(() => {
+      navigateApp('/sessions/other');
+    });
+    await waitFor(() => expect(resolvers.has('other')).toBe(true));
+
+    await act(async () => {
+      resolvers
+        .get('boot')
+        ?.reject(Object.assign(new Error('Only the session creator can access this session'), { statusCode: 403 }));
+      await Promise.resolve();
+    });
+    expect(shell.sessionAccessError).toBeNull();
+
+    await act(async () => {
+      resolvers.get('other')?.resolve({
+        id: 'other',
+        title: 'Other',
+        isMutable: true,
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(shell.pendingSessionId).toBe('other'));
+
+    // Without releasing the abandoned boot wait, New Chat could not update the URL.
+    act(() => {
+      shell.openDraft();
+    });
+    await waitFor(() => expect(pathname).toBe('/'));
   });
 
   it('keeps the session URL and surfaces a pane error when a deep link is not found', async () => {

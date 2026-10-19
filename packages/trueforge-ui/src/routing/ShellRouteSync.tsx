@@ -85,6 +85,7 @@ export function ShellRouteSync({
     environmentsOpen: shell.environmentsOpen,
     pendingSessionId: shell.pendingSessionId,
     activeRemoteId,
+    sessionAccessError: shell.sessionAccessError,
     mode: shell.mode,
     agentConfigMode: shell.agentConfigMode,
   };
@@ -139,6 +140,16 @@ export function ShellRouteSync({
     }
   }, [shell]);
 
+  const releaseAbandonedBootSession = useCallback((sessionId: string) => {
+    // Boot waits until the derived place matches the deep link. If that load is
+    // superseded or abandoned, clear the wait so later shell→URL updates can run.
+    const bootPlace = bootPlaceRef.current;
+    if (bootPlace?.type === 'session' && bootPlace.sessionId === sessionId) {
+      bootPlaceRef.current = null;
+      setShellSyncNonce(nonce => nonce + 1);
+    }
+  }, []);
+
   const openSession = useCallback(
     (sessionId: string) => {
       requestedSessionRef.current = sessionId;
@@ -150,7 +161,10 @@ export function ShellRouteSync({
       void server
         .getSession({ sessionId })
         .then(session => {
-          if (requestedSessionRef.current !== sessionId) return;
+          if (requestedSessionRef.current !== sessionId) {
+            releaseAbandonedBootSession(sessionId);
+            return;
+          }
           shell.openHistorySession({
             sessionId,
             isMutable: session.isMutable,
@@ -159,15 +173,13 @@ export function ShellRouteSync({
           });
         })
         .catch((error: unknown) => {
-          if (requestedSessionRef.current !== sessionId) return;
+          if (requestedSessionRef.current !== sessionId) {
+            releaseAbandonedBootSession(sessionId);
+            return;
+          }
           // The user already left (New Chat, agent, another session): do not pull them back.
           if (chatIdentityRef.current !== requestedChatIdentity) {
-            // Boot still waits on this session. Leaving it set blocks every later URL update.
-            const bootPlace = bootPlaceRef.current;
-            if (bootPlace?.type === 'session' && bootPlace.sessionId === sessionId) {
-              bootPlaceRef.current = null;
-              setShellSyncNonce(nonce => nonce + 1);
-            }
+            releaseAbandonedBootSession(sessionId);
             return;
           }
           shell.openInaccessibleSession({
@@ -176,7 +188,7 @@ export function ShellRouteSync({
           });
         });
     },
-    [server, shell],
+    [releaseAbandonedBootSession, server, shell],
   );
 
   const applyHistoryAgentSearch = useCallback(
