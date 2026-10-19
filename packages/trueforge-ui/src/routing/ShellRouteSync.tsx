@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { sessionIsCreateAgent } from '../atoms/lib/sessionCreateAgent.js';
@@ -99,6 +99,8 @@ export function ShellRouteSync({
   const appliedUrlPlaceRef = useRef<RoutePlace | null>(null);
   const bootedRef = useRef(false);
   const bootPlaceRef = useRef<RoutePlace | null>(null);
+  // Bumped when a boot session load is abandoned, so shell->URL sync runs again.
+  const [shellSyncNonce, setShellSyncNonce] = useState(0);
   const bootHistoryAgentRef = useRef<HistoryAgentSearch | null>(null);
   // Latest session id the URL asked for, so slower lookups cannot bind over it.
   const requestedSessionRef = useRef<string | null>(null);
@@ -159,7 +161,15 @@ export function ShellRouteSync({
         .catch((error: unknown) => {
           if (requestedSessionRef.current !== sessionId) return;
           // The user already left (New Chat, agent, another session): do not pull them back.
-          if (chatIdentityRef.current !== requestedChatIdentity) return;
+          if (chatIdentityRef.current !== requestedChatIdentity) {
+            // Boot still waits on this session. Leaving it set blocks every later URL update.
+            const bootPlace = bootPlaceRef.current;
+            if (bootPlace?.type === 'session' && bootPlace.sessionId === sessionId) {
+              bootPlaceRef.current = null;
+              setShellSyncNonce(nonce => nonce + 1);
+            }
+            return;
+          }
           shell.openInaccessibleSession({
             sessionId,
             message: getErrorMessage(error, 'This session could not be loaded.'),
@@ -382,7 +392,7 @@ export function ShellRouteSync({
     navigate({ pathname: target, search: targetSearch, hash: location.hash }, { replace });
     // location.pathname intentionally excluded: only react to shell-derived place changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [placeKey, routeGatesKey, shell.historyAgentFilter?.agentName, shell.historyAgentFilter?.intent]);
+  }, [placeKey, routeGatesKey, shellSyncNonce, shell.historyAgentFilter?.agentName, shell.historyAgentFilter?.intent]);
 
   // URL -> shell: apply on genuine location changes (Back/Forward, manual edits).
   useEffect(() => {

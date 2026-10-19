@@ -251,6 +251,12 @@ describe('ShellRouteSync', () => {
 
     expect(shell.sessionAccessError).toBeNull();
     expect(shell.pendingSessionId).toBeUndefined();
+    await waitFor(() => expect(pathname).toBe('/'));
+
+    act(() => {
+      shell.openHistorySession({ sessionId: 'later', isMutable: true });
+    });
+    await waitFor(() => expect(pathname).toBe('/sessions/later'));
   });
 
   it('applies an agent deep link on boot and resolves its history filter id', async () => {
