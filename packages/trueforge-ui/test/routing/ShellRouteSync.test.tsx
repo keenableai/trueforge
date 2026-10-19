@@ -227,6 +227,32 @@ describe('ShellRouteSync', () => {
     expect(pathname).toBe('/sessions/missing');
   });
 
+  it('ignores a late access failure after the user starts a New Chat', async () => {
+    let rejectLoad: ((error: unknown) => void) | undefined;
+    renderSync({
+      initialEntries: ['/sessions/slow'],
+      getSession: () =>
+        new Promise((_, reject) => {
+          rejectLoad = reject;
+        }),
+    });
+    await waitFor(() => expect(rejectLoad).toBeDefined());
+    const loadingRuntimeKey = shell.runtimeKey;
+
+    act(() => {
+      shell.openDraft();
+    });
+    expect(shell.runtimeKey).not.toBe(loadingRuntimeKey);
+
+    await act(async () => {
+      rejectLoad?.(Object.assign(new Error('Only the session creator can access this session'), { statusCode: 403 }));
+      await Promise.resolve();
+    });
+
+    expect(shell.sessionAccessError).toBeNull();
+    expect(shell.pendingSessionId).toBeUndefined();
+  });
+
   it('applies an agent deep link on boot and resolves its history filter id', async () => {
     renderSync({ initialEntries: ['/agents/helper'], agentConfig: { mode: 'AgentLibrary' }, strict: true });
     expect(shell.mode).toMatchObject({ status: 'active', isMutable: false, agentName: 'helper' });

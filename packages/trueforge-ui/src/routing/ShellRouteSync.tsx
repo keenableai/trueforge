@@ -102,6 +102,10 @@ export function ShellRouteSync({
   const bootHistoryAgentRef = useRef<HistoryAgentSearch | null>(null);
   // Latest session id the URL asked for, so slower lookups cannot bind over it.
   const requestedSessionRef = useRef<string | null>(null);
+  // Changes when the user starts a new chat/agent or opens another session.
+  const chatIdentity = `${shell.runtimeKey}\0${shell.pendingSessionEpoch}`;
+  const chatIdentityRef = useRef(chatIdentity);
+  chatIdentityRef.current = chatIdentity;
   const requestedHistoryAgentRef = useRef<string | null>(null);
   // Boot owns the first URL; the ongoing effects skip their initial commit so
   // they do not fight boot with the stale first-render place.
@@ -140,6 +144,7 @@ export function ShellRouteSync({
         shell.openHistorySession({ sessionId });
         return;
       }
+      const requestedChatIdentity = chatIdentityRef.current;
       void server
         .getSession({ sessionId })
         .then(session => {
@@ -153,6 +158,8 @@ export function ShellRouteSync({
         })
         .catch((error: unknown) => {
           if (requestedSessionRef.current !== sessionId) return;
+          // The user already left (New Chat, agent, another session): do not pull them back.
+          if (chatIdentityRef.current !== requestedChatIdentity) return;
           shell.openInaccessibleSession({
             sessionId,
             message: getErrorMessage(error, 'This session could not be loaded.'),
