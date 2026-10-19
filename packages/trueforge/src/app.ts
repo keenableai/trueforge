@@ -32,7 +32,7 @@ import { createAvailableSkillsRouter } from './apis/skills';
 import { createTurnsRouter, type BeginTurnExecutionDeps } from './apis/turns';
 import type { Authenticator } from './auth/authenticator';
 import type { Authorizer } from './auth/authorizer';
-import { resolveRequestContext } from './auth/identity';
+import { resolveRequestContext, type RequestContext } from './auth/identity';
 import {
   createAdminAuthMiddleware,
   createApiKeyAuthMiddleware,
@@ -280,7 +280,7 @@ export interface ServerDeps<TTransaction> {
   /** Store bundle for rebuilding a paused turn on a peer request, which has no HTTP context. */
   createPeerTurnExecutionDeps: (input: {
     session: SessionHandle;
-    userRef: string;
+    requestContext: RequestContext;
     requestHeaders?: Record<string, string> | undefined;
   }) => Promise<BeginTurnExecutionDeps>;
   /** Hands out each turn's resumable event stream to the create and subscribe handlers. */

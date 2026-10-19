@@ -39,7 +39,7 @@ import { streamSSE } from 'hono/streaming';
 import type { Logger } from 'winston';
 import type { ResolveMcpServerStoreInput, ResolveModelProviderStoreInput, ResolveTurnSkillsStoreInput } from '../app';
 import type { Authorizer } from '../auth/authorizer';
-import type { ResolveRequestContext } from '../auth/identity';
+import { requestContextFromWire, type RequestContext, type ResolveRequestContext } from '../auth/identity';
 import configuration from '../config';
 import type { AgentRecord, IAgentStore } from '../db/agentStore';
 import type { IMcpServerWithAuthStore } from '../db/mcpServerStore';
@@ -151,7 +151,7 @@ export interface TurnsRouterDeps {
   createPeerTurnExecutionDeps?:
     | ((input: {
         session: SessionHandle;
-        userRef: string;
+        requestContext: RequestContext;
         requestHeaders?: Record<string, string> | undefined;
       }) => Promise<BeginTurnExecutionDeps>)
     | undefined;
@@ -603,7 +603,7 @@ export async function startTurnInProcess(params: BeginTurnExecutionParams): Prom
 async function resumePausedTurn(input: {
   session: SessionHandle;
   turnId: string;
-  userRef: string;
+  requestContext: RequestContext;
   requestHeaders?: Record<string, string> | undefined;
   deps: BeginTurnExecutionDeps;
 }): Promise<{ turn: TurnHandle; startDrain: () => void }> {
@@ -631,7 +631,7 @@ async function resumePausedTurn(input: {
     webSearchProvider,
     logger: input.deps.logger,
     signal: abortController.signal,
-    userRef: input.userRef,
+    userRef: input.requestContext.subject.id,
     session: input.session,
     turnMetadata: {
       sessionId: input.session.session_id,
@@ -1187,14 +1187,13 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
         redis: deps.redis,
         logger: deps.logger,
         allowSteal: true,
-        userRef: requestContext.subject.id,
-        tenantId: requestContext.tenant_id,
+        requestContext,
         requestHeaders,
         resume: () =>
           resumePausedTurn({
             session,
             turnId,
-            userRef: requestContext.subject.id,
+            requestContext,
             requestHeaders,
             deps: executionDeps,
           }),
@@ -1277,9 +1276,10 @@ async function handlePeerTurnEvents(deps: TurnsRouterDeps, request: { body: unkn
   const result = await deps.activeTurns.withTurnLock(
     { sessionId: parsed.data.session_id, turnId: parsed.data.turn_id },
     async () => {
+      const requestContext = requestContextFromWire(parsed.data.request_context);
       const executionDeps = await createPeerTurnExecutionDeps({
         session,
-        userRef: parsed.data.user_ref,
+        requestContext,
         requestHeaders: parsed.data.request_headers,
       });
       return deliverTurnEvents({
@@ -1291,14 +1291,13 @@ async function handlePeerTurnEvents(deps: TurnsRouterDeps, request: { body: unkn
         redis: undefined,
         logger: deps.logger,
         allowSteal: false,
-        userRef: parsed.data.user_ref,
-        tenantId: parsed.data.tenant_id,
+        requestContext,
         requestHeaders: parsed.data.request_headers,
         resume: () =>
           resumePausedTurn({
             session,
             turnId: parsed.data.turn_id,
-            userRef: parsed.data.user_ref,
+            requestContext,
             requestHeaders: parsed.data.request_headers,
             deps: executionDeps,
           }),

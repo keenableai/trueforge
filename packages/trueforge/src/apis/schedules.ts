@@ -206,6 +206,7 @@ export function createScheduleExecutionRouter<TTransaction>(deps: ScheduleTurnEx
         requestContextFromCreatedBySubject({
           tenant_id: item.schedule.tenant_id,
           created_by_subject: item.schedule.created_by_subject,
+          user_credential: null,
         }),
       );
       await startScheduleRunOnRequest({ c, item, deps });

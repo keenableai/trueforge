@@ -25,6 +25,7 @@ import {
 } from '@truefoundry/trueforge-core/request-reply';
 import type { Logger } from 'winston';
 import { z } from 'zod';
+import type { RequestContext } from '../auth/identity';
 import configuration from '../config';
 import type { ActiveTurnRegistry } from './activeTurns';
 import { PeerOutcome, resolveOwnershipAction, TurnOwnershipAction } from './turnOwnership';
@@ -34,12 +35,23 @@ export const TURNS_SEND_EVENTS_PATH = 'turns/send-events';
 
 const MAX_OWNERSHIP_ATTEMPTS = 4;
 
+const PeerRequestContextSchema = z.object({
+  tenant_id: z.string(),
+  subject: z.object({
+    id: z.string(),
+    type: z.string(),
+    display_name: z.string(),
+  }),
+  roles: z.array(z.string()),
+  user_credential: z.string().nullable(),
+});
+
 export const SendEventsPeerBodySchema = z.object({
   tenant_id: z.string(),
   session_id: z.string(),
   turn_id: z.string(),
-  user_ref: z.string(),
   events: z.array(TurnUserEventSchema),
+  request_context: PeerRequestContextSchema,
   request_headers: z.record(z.string(), z.string()).optional(),
 });
 
@@ -98,8 +110,7 @@ export async function deliverTurnEvents(input: {
   resume: () => Promise<{ turn: TurnHandle; startDrain: () => void }>;
   /** Peer delivery is owner-local. Only the replica that received the client request may steal. */
   allowSteal: boolean;
-  userRef: string;
-  tenantId: string;
+  requestContext: RequestContext;
   requestHeaders?: Record<string, string> | undefined;
 }): Promise<TurnDeliveryResult> {
   const sessionId = input.session.session_id;
@@ -136,8 +147,7 @@ export async function deliverTurnEvents(input: {
         sessionId,
         turnId: input.turnId,
         events: input.events,
-        userRef: input.userRef,
-        tenantId: input.tenantId,
+        requestContext: input.requestContext,
         requestHeaders: input.requestHeaders,
         logger: input.logger,
       });
@@ -263,20 +273,25 @@ async function forwardTurnEvents(input: {
   sessionId: string;
   turnId: string;
   events: TurnUserEvent[];
-  userRef: string;
-  tenantId: string;
+  requestContext: RequestContext;
   requestHeaders?: Record<string, string> | undefined;
   logger: Pick<Logger, 'warn'>;
 }): Promise<ForwardResult> {
   if (!input.redis) {
     return { type: 'unavailable', message: `Turn owner is unavailable: ${input.turnId}` };
   }
+  const { requestContext } = input;
   const body = SendEventsPeerBodySchema.parse({
-    tenant_id: input.tenantId,
+    tenant_id: requestContext.tenant_id,
     session_id: input.sessionId,
     turn_id: input.turnId,
-    user_ref: input.userRef,
     events: input.events,
+    request_context: {
+      tenant_id: requestContext.tenant_id,
+      subject: requestContext.subject,
+      roles: requestContext.roles,
+      user_credential: requestContext.user_credential,
+    },
     ...(input.requestHeaders === undefined ? {} : { request_headers: input.requestHeaders }),
   });
   try {

@@ -97,12 +97,7 @@ import {
 } from './app';
 import { TrueForgeAuthorizer, type Authorizer } from './auth/authorizer';
 import { createAuthenticator } from './auth/createAuthenticator';
-import {
-  requestContextFromCreatedBySubject,
-  resolveRequestContext,
-  STANDALONE_REQUEST_CONTEXT,
-  type RequestContext,
-} from './auth/identity';
+import { resolveRequestContext, STANDALONE_REQUEST_CONTEXT, type RequestContext } from './auth/identity';
 import { initOidc } from './auth/oidc';
 import { McpCatalog } from './catalog/McpCatalog';
 import { ModelCatalog } from './catalog/ModelCatalog';
@@ -771,13 +766,10 @@ async function createServerRuntime<TTransaction>(persistence: ServerPersistence<
   };
   const createPeerTurnExecutionDeps = async (input: {
     session: SessionHandle;
-    userRef: string;
+    requestContext: RequestContext;
     requestHeaders?: Record<string, string> | undefined;
   }) => {
-    const requestContext = requestContextFromCreatedBySubject({
-      tenant_id: input.session.tenant_id,
-      created_by_subject: input.session.record.created_by_subject,
-    });
+    const { requestContext } = input;
     let referencedAgent: AgentRecord | undefined;
     if (input.session.record.agent.type === 'reference') {
       referencedAgent = await agentStore.getAgent({
