@@ -237,7 +237,7 @@ function usageSetExpr(usage: CurrentContextUsage | null): RawBuilder<string> {
 }
 
 async function fencedTurnThreadContextUpdate(
-  db: DbOrTrx,
+  db: Transaction<Database>,
   args: {
     keys: TurnKeys;
     thread_id: string;
@@ -330,7 +330,7 @@ export async function appendToThreadContext(db: Kysely<Database>, input: AppendT
 }
 
 export async function appendToThreadContextInTransaction(
-  db: DbOrTrx,
+  db: Transaction<Database>,
   input: AppendToThreadContextInput,
 ): Promise<void> {
   await fencedTurnThreadContextUpdate(db, {
@@ -353,18 +353,20 @@ export async function appendToThreadContextInTransaction(
  * Old log rows stay — ancestor turns' context mapping may reference them.
  */
 export async function overwriteThreadContext(db: Kysely<Database>, input: OverwriteThreadContextInput): Promise<void> {
-  await fencedTurnThreadContextUpdate(db, {
-    keys: {
-      session_id: input.session_id,
-      turn_id: input.turn_id,
-      active_executor_id: input.active_executor_id,
-    },
-    thread_id: input.event.thread_id,
-    context: input.event.context,
-    replace_array: true,
-    current_context_usage: null,
-    completion: null,
-    usage_unconditional: input.event.current_context_usage,
+  await db.transaction().execute(async trx => {
+    await fencedTurnThreadContextUpdate(trx, {
+      keys: {
+        session_id: input.session_id,
+        turn_id: input.turn_id,
+        active_executor_id: input.active_executor_id,
+      },
+      thread_id: input.event.thread_id,
+      context: input.event.context,
+      replace_array: true,
+      current_context_usage: null,
+      completion: null,
+      usage_unconditional: input.event.current_context_usage,
+    });
   });
 }
 
