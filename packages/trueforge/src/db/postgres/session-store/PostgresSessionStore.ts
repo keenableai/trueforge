@@ -53,7 +53,7 @@ import {
   markTurnInboundEventsConsumedInTransaction,
   markTurnInboundEventsConsumed as markTurnInboundEventsConsumedQuery,
 } from './queries/inboundEvents';
-import { patchThreadsMCPAuthInTransaction, patchThreadsMCPAuth as patchThreadsMCPAuthQuery } from './queries/mcpAuth';
+import { patchThreadsMCPAuth as patchThreadsMCPAuthQuery } from './queries/mcpAuth';
 import {
   createSession as createSessionQuery,
   deleteSession as deleteSessionQuery,
@@ -270,9 +270,7 @@ export class PostgresSessionStore implements ISessionStore<SessionCustom, TurnCu
   }
 
   patchThreadsMCPAuth(input: PatchThreadsMCPAuthInput, transaction?: Transaction<Database>): Promise<void> {
-    return transaction
-      ? patchThreadsMCPAuthInTransaction(transaction, input)
-      : patchThreadsMCPAuthQuery(this.db, input);
+    return patchThreadsMCPAuthQuery(this.db, input, transaction);
   }
 
   listTurnEvents(input: ListTurnEventsInput): Promise<{ data: PersistedTurnEvent[]; pagination: TokenPagination }> {
