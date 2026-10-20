@@ -26,9 +26,9 @@ export interface SettingsRouterDeps<TTransaction> {
   resolveMcpServerStore: (input: { c: Context }) => IMcpServerWithAuthStore<TTransaction>;
   tokenStore: IOAuthTokenStore<TTransaction>;
   resolveSkillStore: ResolveSkillStore<TTransaction>;
-  resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
+  sandboxProviderStore: ISandboxProviderStore<TTransaction>;
   sandboxEnvironmentStore: ISandboxEnvironmentStore<TTransaction>;
-  resolveWebSearchProviderStore: (c: Context) => IWebSearchProviderStore<TTransaction>;
+  webSearchProviderStore: IWebSearchProviderStore<TTransaction>;
   /** Delete routes refuse to remove a catalog entry an agent still references. */
   resolveAgentStore: (c: Context) => IAgentStore<TTransaction>;
   withTransaction: WithTransaction<TTransaction>;
@@ -70,7 +70,7 @@ export function createSettingsRouter<TTransaction>(deps: SettingsRouterDeps<TTra
   router.route(
     '/sandbox-providers',
     createSandboxProvidersRouter({
-      resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
+      sandboxProviderStore: deps.sandboxProviderStore,
       sandboxEnvironmentStore: deps.sandboxEnvironmentStore,
       withTransaction: deps.withTransaction,
       logger: deps.logger,
@@ -80,7 +80,7 @@ export function createSettingsRouter<TTransaction>(deps: SettingsRouterDeps<TTra
   router.route(
     '/web-search-providers',
     createWebSearchProvidersRouter({
-      resolveWebSearchProviderStore: deps.resolveWebSearchProviderStore,
+      webSearchProviderStore: deps.webSearchProviderStore,
       resolveRequestContext: deps.resolveRequestContext,
     }),
   );

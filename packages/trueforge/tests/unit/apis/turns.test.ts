@@ -36,6 +36,17 @@ function mcpServerStoreWithAuth(db: Kysely<Database>, tokenStore: SqliteOAuthTok
   });
 }
 
+function turnExecutionStores(db: Kysely<Database>, tokenStore: SqliteOAuthTokenStore) {
+  return {
+    agentStore: new SqliteAgentStore(db),
+    modelProviderStore: new SqliteModelProviderStore(db),
+    mcpServerStore: mcpServerStoreWithAuth(db, tokenStore),
+    skillStore: new SqliteSkillStore(db),
+    sandboxProviderStore: new SqliteSandboxProviderStore(db),
+    webSearchProviderStore: new SqliteWebSearchProviderStore(db),
+  };
+}
+
 describe('turns', () => {
   it('namespaces turn stream ids under tfg', () => {
     expect(turnStreamId('ten', 'sess', 'turn1')).toBe('tfg:agent:turn:ten:sess:turn1:stream');
@@ -119,21 +130,18 @@ describe('turns', () => {
       app.route(
         '/',
         createTurnsRouter({
+          activeTurns: new ActiveTurnRegistry(),
+          authorizer: new TrueForgeAuthorizer(),
+          eventSubscriptions: new EventSubscriptionRegistry(undefined),
+          logger: createLogger({ silent: true }),
+          requestReplyRouter: new RequestReplyRouter(),
+          resolveAgentStore: () => new SqliteAgentStore(db),
+          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          resolveTurnExecutionStores: () => Promise.resolve(turnExecutionStores(db, tokenStore)),
+          sandboxEnvironmentStore: new SqliteSandboxEnvironmentStore(db),
+          sandboxProviderStore: new SqliteSandboxProviderStore(db),
           sessions,
           sessionStore,
-          activeTurns: new ActiveTurnRegistry(),
-          resolveModelProviderStore: () => new SqliteModelProviderStore(db),
-          resolveMcpServerStore: () => mcpServerStoreWithAuth(db, tokenStore),
-          resolveTurnSkillsStore: () => new SqliteSkillStore(db),
-          resolveAgentStore: () => new SqliteAgentStore(db),
-          eventSubscriptions: new EventSubscriptionRegistry(undefined),
-          resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
-          sandboxEnvironmentStore: new SqliteSandboxEnvironmentStore(db),
-          resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
-          logger: createLogger({ silent: true }),
-          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
-          requestReplyRouter: new RequestReplyRouter(),
-          authorizer: new TrueForgeAuthorizer(),
         }),
       );
 
@@ -216,20 +224,7 @@ describe('turns', () => {
       app.route(
         '/',
         createTurnsRouter({
-          sessions: new Sessions({ sessionStore }),
-          sessionStore,
           activeTurns: new ActiveTurnRegistry(),
-          resolveModelProviderStore: () => new SqliteModelProviderStore(db),
-          resolveMcpServerStore: () => mcpServerStoreWithAuth(db, new SqliteOAuthTokenStore(db)),
-          resolveTurnSkillsStore: () => new SqliteSkillStore(db),
-          resolveAgentStore: () => agentStore,
-          eventSubscriptions: new EventSubscriptionRegistry(undefined),
-          resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
-          sandboxEnvironmentStore: new SqliteSandboxEnvironmentStore(db),
-          resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
-          logger: createLogger({ silent: true }),
-          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
-          requestReplyRouter: new RequestReplyRouter(),
           authorizer: {
             listAgentAccess: input =>
               Promise.resolve(
@@ -243,6 +238,16 @@ describe('turns', () => {
               permissions: Object.fromEntries(resourceIds.map(id => [id, []])),
             }),
           },
+          eventSubscriptions: new EventSubscriptionRegistry(undefined),
+          logger: createLogger({ silent: true }),
+          requestReplyRouter: new RequestReplyRouter(),
+          resolveAgentStore: () => agentStore,
+          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          resolveTurnExecutionStores: () => Promise.resolve(turnExecutionStores(db, new SqliteOAuthTokenStore(db))),
+          sandboxEnvironmentStore: new SqliteSandboxEnvironmentStore(db),
+          sandboxProviderStore: new SqliteSandboxProviderStore(db),
+          sessions: new Sessions({ sessionStore }),
+          sessionStore,
         }),
       );
 
@@ -319,21 +324,18 @@ describe('turns', () => {
       app.route(
         '/',
         createTurnsRouter({
+          activeTurns: new ActiveTurnRegistry(),
+          authorizer: new TrueForgeAuthorizer(),
+          eventSubscriptions: new EventSubscriptionRegistry(undefined),
+          logger: createLogger({ silent: true }),
+          requestReplyRouter: new RequestReplyRouter(),
+          resolveAgentStore: () => new SqliteAgentStore(db),
+          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          resolveTurnExecutionStores: () => Promise.resolve(turnExecutionStores(db, new SqliteOAuthTokenStore(db))),
+          sandboxEnvironmentStore: new SqliteSandboxEnvironmentStore(db),
+          sandboxProviderStore: new SqliteSandboxProviderStore(db),
           sessions: new Sessions({ sessionStore }),
           sessionStore,
-          activeTurns: new ActiveTurnRegistry(),
-          resolveModelProviderStore: () => new SqliteModelProviderStore(db),
-          resolveMcpServerStore: () => mcpServerStoreWithAuth(db, new SqliteOAuthTokenStore(db)),
-          resolveTurnSkillsStore: () => new SqliteSkillStore(db),
-          resolveAgentStore: () => new SqliteAgentStore(db),
-          eventSubscriptions: new EventSubscriptionRegistry(undefined),
-          resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
-          sandboxEnvironmentStore: new SqliteSandboxEnvironmentStore(db),
-          resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
-          logger: createLogger({ silent: true }),
-          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
-          requestReplyRouter: new RequestReplyRouter(),
-          authorizer: new TrueForgeAuthorizer(),
         }),
       );
 
@@ -391,21 +393,18 @@ describe('turns', () => {
       app.route(
         '/',
         createTurnsRouter({
+          activeTurns: new ActiveTurnRegistry(),
+          authorizer: new TrueForgeAuthorizer(),
+          eventSubscriptions: new EventSubscriptionRegistry(undefined),
+          logger: createLogger({ silent: true }),
+          requestReplyRouter: new RequestReplyRouter(),
+          resolveAgentStore: () => new SqliteAgentStore(db),
+          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          resolveTurnExecutionStores: () => Promise.resolve(turnExecutionStores(db, new SqliteOAuthTokenStore(db))),
+          sandboxEnvironmentStore: new SqliteSandboxEnvironmentStore(db),
+          sandboxProviderStore: new SqliteSandboxProviderStore(db),
           sessions,
           sessionStore,
-          activeTurns: new ActiveTurnRegistry(),
-          resolveModelProviderStore: () => new SqliteModelProviderStore(db),
-          resolveMcpServerStore: () => mcpServerStoreWithAuth(db, new SqliteOAuthTokenStore(db)),
-          resolveTurnSkillsStore: () => new SqliteSkillStore(db),
-          resolveAgentStore: () => new SqliteAgentStore(db),
-          eventSubscriptions: new EventSubscriptionRegistry(undefined),
-          resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
-          sandboxEnvironmentStore: new SqliteSandboxEnvironmentStore(db),
-          resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
-          logger: createLogger({ silent: true }),
-          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
-          requestReplyRouter: new RequestReplyRouter(),
-          authorizer: new TrueForgeAuthorizer(),
         }),
       );
 
@@ -500,21 +499,18 @@ describe('turns', () => {
       app.route(
         '/',
         createTurnsRouter({
+          activeTurns: new ActiveTurnRegistry(),
+          authorizer: new TrueForgeAuthorizer(),
+          eventSubscriptions,
+          logger,
+          requestReplyRouter: new RequestReplyRouter(),
+          resolveAgentStore: () => new SqliteAgentStore(db),
+          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          resolveTurnExecutionStores: () => Promise.resolve(turnExecutionStores(db, tokenStore)),
+          sandboxEnvironmentStore: new SqliteSandboxEnvironmentStore(db),
+          sandboxProviderStore: new SqliteSandboxProviderStore(db),
           sessions,
           sessionStore: new SqliteSessionStore(db),
-          activeTurns: new ActiveTurnRegistry(),
-          resolveModelProviderStore: () => modelProviderStore,
-          resolveMcpServerStore: () => mcpServerStoreWithAuth(db, tokenStore),
-          resolveAgentStore: () => new SqliteAgentStore(db),
-          resolveTurnSkillsStore: () => new SqliteSkillStore(db),
-          eventSubscriptions,
-          resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
-          sandboxEnvironmentStore: new SqliteSandboxEnvironmentStore(db),
-          resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
-          logger,
-          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
-          requestReplyRouter: new RequestReplyRouter(),
-          authorizer: new TrueForgeAuthorizer(),
         }),
       );
 
@@ -610,21 +606,18 @@ describe('turns', () => {
       app.route(
         '/',
         createTurnsRouter({
+          activeTurns: new ActiveTurnRegistry(),
+          authorizer: new TrueForgeAuthorizer(),
+          eventSubscriptions: new EventSubscriptionRegistry(undefined),
+          logger,
+          requestReplyRouter: new RequestReplyRouter(),
+          resolveAgentStore: () => new SqliteAgentStore(db),
+          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          resolveTurnExecutionStores: () => Promise.resolve(turnExecutionStores(db, tokenStore)),
+          sandboxEnvironmentStore: new SqliteSandboxEnvironmentStore(db),
+          sandboxProviderStore: new SqliteSandboxProviderStore(db),
           sessions,
           sessionStore: new SqliteSessionStore(db),
-          activeTurns: new ActiveTurnRegistry(),
-          resolveModelProviderStore: () => modelProviderStore,
-          resolveMcpServerStore: () => mcpServerStoreWithAuth(db, tokenStore),
-          resolveTurnSkillsStore: () => new SqliteSkillStore(db),
-          resolveAgentStore: () => new SqliteAgentStore(db),
-          eventSubscriptions: new EventSubscriptionRegistry(undefined),
-          resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
-          sandboxEnvironmentStore: new SqliteSandboxEnvironmentStore(db),
-          resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
-          logger,
-          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
-          requestReplyRouter: new RequestReplyRouter(),
-          authorizer: new TrueForgeAuthorizer(),
         }),
       );
 
@@ -698,21 +691,18 @@ describe('turns', () => {
       app.route(
         '/',
         createTurnsRouter({
+          activeTurns: new ActiveTurnRegistry(),
+          authorizer,
+          eventSubscriptions: new EventSubscriptionRegistry(undefined),
+          logger: createLogger({ silent: true }),
+          requestReplyRouter: new RequestReplyRouter(),
+          resolveAgentStore: () => agentStore,
+          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          resolveTurnExecutionStores: () => Promise.resolve(turnExecutionStores(db, tokenStore)),
+          sandboxEnvironmentStore: new SqliteSandboxEnvironmentStore(db),
+          sandboxProviderStore: new SqliteSandboxProviderStore(db),
           sessions,
           sessionStore,
-          activeTurns: new ActiveTurnRegistry(),
-          resolveModelProviderStore: () => new SqliteModelProviderStore(db),
-          resolveMcpServerStore: () => mcpServerStoreWithAuth(db, tokenStore),
-          resolveTurnSkillsStore: () => new SqliteSkillStore(db),
-          resolveAgentStore: () => agentStore,
-          eventSubscriptions: new EventSubscriptionRegistry(undefined),
-          resolveSandboxProviderStore: () => new SqliteSandboxProviderStore(db),
-          sandboxEnvironmentStore: new SqliteSandboxEnvironmentStore(db),
-          resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
-          logger: createLogger({ silent: true }),
-          resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
-          requestReplyRouter: new RequestReplyRouter(),
-          authorizer,
         }),
       );
       return { app, agent, agentStore };

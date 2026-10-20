@@ -52,7 +52,7 @@ describe('sandbox environments API → build controller path', () => {
         ({
           listAgentNamesUsingSandboxEnvironment: jest.fn().mockResolvedValue([]),
         }) as never,
-      resolveSandboxProviderStore: () => sandboxProviderStore,
+      sandboxProviderStore,
       resolveRequestContext: () => requestContext,
       logger,
     });

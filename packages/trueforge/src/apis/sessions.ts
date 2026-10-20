@@ -12,7 +12,6 @@ import { type RedisClient, type RequestReplyRouter } from '@truefoundry/trueforg
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { Logger } from 'winston';
-import type { ResolveSkillStoreInput } from '../app';
 import type { Authorizer } from '../auth/authorizer';
 import { createdBySubjectFromRequestContext, type RequestContext, type ResolveRequestContext } from '../auth/identity';
 import type { IAgentStore } from '../db/agentStore';
@@ -59,17 +58,9 @@ export function toWireSession(record: SessionRecord): Session {
 }
 
 export interface SessionsRouterDeps {
-  sessions: Sessions;
-  sessionStore: ISessionStore;
   activeTurns: ActiveTurnRegistry;
-  resolveModelProviderStore: (input: { c: Context; allowInlineResources?: boolean }) => IModelProviderStore;
-  resolveMcpServerStore: (input: { c: Context; allowInlineResources?: boolean }) => IMcpServerStore;
-  resolveSkillStore: (input: ResolveSkillStoreInput) => ISkillStore;
-  resolveAgentStore: (c: Context) => IAgentStore;
-  resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore;
-  sandboxEnvironmentStore: ISandboxEnvironmentStore;
-  resolveWebSearchProviderStore: (c: Context) => IWebSearchProviderStore;
-  resolveRequestContext: ResolveRequestContext;
+  authorizer: Authorizer;
+  logger: Logger;
   /**
    * Publishes to another executor:
    *  - Creating the next turn -> redis request `sessions/cancel`
@@ -82,8 +73,16 @@ export interface SessionsRouterDeps {
    * - `sessions/cancel` -> {@link cancelSessionTurnPeerHandler}
    */
   requestReplyRouter: RequestReplyRouter;
-  logger: Logger;
-  authorizer: Authorizer;
+  resolveAgentStore: (c: Context) => IAgentStore;
+  resolveMcpServerStore: (input: { c: Context; allowInlineResources?: boolean }) => IMcpServerStore;
+  resolveModelProviderStore: (input: { c: Context; allowInlineResources?: boolean }) => IModelProviderStore;
+  resolveRequestContext: ResolveRequestContext;
+  resolveSkillStore: (input: { c: Context; allowInlineResources?: boolean }) => ISkillStore;
+  sandboxEnvironmentStore: ISandboxEnvironmentStore;
+  sandboxProviderStore: ISandboxProviderStore;
+  sessions: Sessions;
+  sessionStore: ISessionStore;
+  webSearchProviderStore: IWebSearchProviderStore;
 }
 
 const FORBIDDEN_SESSION_ACCESS = 'Only the session creator can access this session';
@@ -105,12 +104,12 @@ function isSessionOwner({
 function validateInlineSessionSpec(
   deps: Pick<
     SessionsRouterDeps,
-    | 'resolveModelProviderStore'
     | 'resolveMcpServerStore'
+    | 'resolveModelProviderStore'
     | 'resolveSkillStore'
-    | 'resolveSandboxProviderStore'
     | 'sandboxEnvironmentStore'
-    | 'resolveWebSearchProviderStore'
+    | 'sandboxProviderStore'
+    | 'webSearchProviderStore'
   >,
   input: { c: Context; spec: AgentSpec; requestContext: RequestContext },
 ): Promise<void> {
@@ -122,24 +121,24 @@ function validateInlineSessionSpec(
     modelProviderStore: deps.resolveModelProviderStore({ c, allowInlineResources: true }),
     mcpServerStore: deps.resolveMcpServerStore({ c, allowInlineResources: true }),
     skillStore: deps.resolveSkillStore({ c, allowInlineResources: true }),
-    sandboxProviderStore: deps.resolveSandboxProviderStore(c),
+    sandboxProviderStore: deps.sandboxProviderStore,
     sandboxEnvironmentStore: deps.sandboxEnvironmentStore,
-    webSearchProviderStore: deps.resolveWebSearchProviderStore(c),
+    webSearchProviderStore: deps.webSearchProviderStore,
   });
 }
 
 type InternalSessionsRouterDeps = Pick<
   SessionsRouterDeps,
-  | 'sessions'
-  | 'resolveModelProviderStore'
-  | 'resolveMcpServerStore'
-  | 'resolveSkillStore'
-  | 'resolveAgentStore'
-  | 'resolveSandboxProviderStore'
-  | 'sandboxEnvironmentStore'
-  | 'resolveWebSearchProviderStore'
-  | 'resolveRequestContext'
   | 'authorizer'
+  | 'resolveAgentStore'
+  | 'resolveMcpServerStore'
+  | 'resolveModelProviderStore'
+  | 'resolveRequestContext'
+  | 'resolveSkillStore'
+  | 'sandboxEnvironmentStore'
+  | 'sandboxProviderStore'
+  | 'sessions'
+  | 'webSearchProviderStore'
 >;
 
 function createGetOrCreateSessionByExternalIdHandler(
@@ -354,9 +353,9 @@ export function createSessionsRouter(deps: SessionsRouterDeps) {
           modelProviderStore: deps.resolveModelProviderStore({ c }),
           mcpServerStore: deps.resolveMcpServerStore({ c }),
           skillStore: deps.resolveSkillStore({ c }),
-          sandboxProviderStore: deps.resolveSandboxProviderStore(c),
+          sandboxProviderStore: deps.sandboxProviderStore,
           sandboxEnvironmentStore: deps.sandboxEnvironmentStore,
-          webSearchProviderStore: deps.resolveWebSearchProviderStore(c),
+          webSearchProviderStore: deps.webSearchProviderStore,
         });
       }
     }

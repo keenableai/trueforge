@@ -69,22 +69,24 @@ import { getTurnExecutionError, startTurnInProcess } from './turns';
 
 /** Runtime + Context store resolvers needed to start a schedule turn. */
 export interface ScheduleTurnExecutionDeps<TTransaction> {
-  scheduleStore: IScheduleStore<TTransaction>;
-  sessions: Sessions;
   activeTurns: ActiveTurnRegistry;
-  eventSubscriptions: EventSubscriptionRegistry<TurnStreamingEvent>;
-  logger: Logger;
-  resolveModelProviderStore: (input: { c: Context; runAsAgent?: AgentRecord }) => IModelProviderStore<TTransaction>;
-  resolveMcpServerStore: (input: { c: Context; runAsAgent?: AgentRecord }) => IMcpServerWithAuthStore<TTransaction>;
-  resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
-  sandboxEnvironmentStore: ISandboxEnvironmentStore<TTransaction>;
-  resolveWebSearchProviderStore: (c: Context) => IWebSearchProviderStore<TTransaction>;
   /** Persistence agent store (schedule agent binding is not caller-scoped). */
   agentStore: IAgentStore<TTransaction>;
-  /** Call with `{}` — schedules have no caller `x-tfg-skills`. */
+  eventSubscriptions: EventSubscriptionRegistry<TurnStreamingEvent>;
+  logger: Logger;
+  /** Needed to resolve MCP servers from the agent spec. */
+  resolveMcpServerStore: (input: { c: Context; runAsAgent?: AgentRecord }) => IMcpServerWithAuthStore<TTransaction>;
+  /** Needed to resolve models from the agent spec. */
+  resolveModelProviderStore: (input: { c: Context; runAsAgent?: AgentRecord }) => IModelProviderStore<TTransaction>;
+  /** Needed to resolve skills from the agent spec. */
   resolveTurnSkillsStore: (input: ResolveTurnSkillsStoreInput) => Pick<ISkillStore, 'resolveTurnSkills'>;
+  sandboxEnvironmentStore: ISandboxEnvironmentStore<TTransaction>;
+  sandboxProviderStore: ISandboxProviderStore<TTransaction>;
+  scheduleStore: IScheduleStore<TTransaction>;
+  sessions: Sessions;
   /** Previous-turn cancel when a schedule run supersedes a turn that is not in this process. */
   sessionStore: Pick<ISessionStore, 'getTurn'>;
+  webSearchProviderStore: IWebSearchProviderStore<TTransaction>;
 }
 
 export interface SchedulesRouterDeps<TTransaction> extends ScheduleTurnExecutionDeps<TTransaction> {
@@ -123,9 +125,9 @@ export async function startScheduleRunOnRequest<TTransaction>(params: {
       agentStore: deps.agentStore,
       modelProviderStore: deps.resolveModelProviderStore({ c, runAsAgent: prepared.agent }),
       mcpServerStore: deps.resolveMcpServerStore({ c, runAsAgent: prepared.agent }),
-      sandboxProviderStore: deps.resolveSandboxProviderStore(c),
+      sandboxProviderStore: deps.sandboxProviderStore,
       sandboxEnvironmentStore: deps.sandboxEnvironmentStore,
-      webSearchProviderStore: deps.resolveWebSearchProviderStore(c),
+      webSearchProviderStore: deps.webSearchProviderStore,
       skillStore: deps.resolveTurnSkillsStore({}),
       logger: deps.logger,
       sessionStore: deps.sessionStore,

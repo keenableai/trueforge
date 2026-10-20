@@ -41,7 +41,6 @@ import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { streamSSE } from 'hono/streaming';
 import type { Logger } from 'winston';
-import type { ResolveMcpServerStoreInput, ResolveModelProviderStoreInput, ResolveTurnSkillsStoreInput } from '../app';
 import type { Authorizer } from '../auth/authorizer';
 import { requestContextFromWire, type RequestContext, type ResolveRequestContext } from '../auth/identity';
 import configuration from '../config';
@@ -128,22 +127,33 @@ export function toContentDisposition(path: string): string {
   return `attachment; filename*=UTF-8''${encoded}`;
 }
 
+/**
+ * Model, MCP, skill, agent, sandbox, and web-search stores for one turn.
+ * HTTP passes the request's context and headers. A peered `turns/send-events` passes the body fields.
+ */
+export interface ResolveTurnExecutionStoresInput {
+  session: SessionHandle;
+  requestContext: RequestContext;
+  requestHeaders?: Record<string, string> | undefined;
+  /** Saved agent when the session references one. The caller loads it. */
+  runAsAgent?: AgentRecord;
+}
+
+export interface TurnExecutionStores<TTransaction = never> {
+  agentStore: IAgentStore<TTransaction>;
+  modelProviderStore: IModelProviderStore<TTransaction>;
+  mcpServerStore: IMcpServerWithAuthStore<TTransaction>;
+  skillStore: Pick<ISkillStore<TTransaction>, 'resolveTurnSkills'>;
+  sandboxProviderStore: ISandboxProviderStore<TTransaction>;
+  webSearchProviderStore: IWebSearchProviderStore<TTransaction>;
+}
+
 export interface TurnsRouterDeps {
-  sessions: Sessions;
-  sessionStore: ISessionStore;
   activeTurns: ActiveTurnRegistry;
-  resolveModelProviderStore: (input: ResolveModelProviderStoreInput) => IModelProviderStore;
-  resolveMcpServerStore: (input: ResolveMcpServerStoreInput) => IMcpServerWithAuthStore;
-  resolveTurnSkillsStore: (input: ResolveTurnSkillsStoreInput) => Pick<ISkillStore, 'resolveTurnSkills'>;
-  resolveAgentStore: (c: Context) => IAgentStore;
+  authorizer: Authorizer;
   /** Resumable live turn-event transport: create-turn writes, subscribe polls. */
   eventSubscriptions: EventSubscriptionRegistry<TurnStreamingEvent>;
-  resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore;
-  sandboxEnvironmentStore: ISandboxEnvironmentStore;
-  resolveWebSearchProviderStore: (c: Context) => IWebSearchProviderStore;
   logger: Logger;
-  resolveRequestContext: ResolveRequestContext;
-  authorizer: Authorizer;
   /**
    * Publishes to another executor:
    *  - POST /events -> redis request `turns/send-events`
@@ -157,18 +167,21 @@ export interface TurnsRouterDeps {
    * - `turns/send-events` -> {@link handlePeerTurnEvents}
    */
   requestReplyRouter: RequestReplyRouter;
+  /** List, get, list events, subscribe, download, and create (referenced-agent check). */
+  resolveAgentStore: (requestContext: RequestContext) => IAgentStore;
+  resolveRequestContext: ResolveRequestContext;
   /**
-   * Builds model, MCP, and skill stores for that inbound rebuild. The peer body carries
-   * the caller's request context and headers, and there is no Hono context. POST /events
-   * on this process builds the same stores from the HTTP request instead.
+   * Model, MCP, skill, agent, sandbox, and web-search stores for a turn.
+   * Create, POST /events, and a peered `turns/send-events` all call this with the caller's
+   * request context and headers.
    */
-  createPeerTurnExecutionDeps?:
-    | ((input: {
-        session: SessionHandle;
-        requestContext: RequestContext;
-        requestHeaders?: Record<string, string> | undefined;
-      }) => Promise<BeginTurnExecutionDeps>)
-    | undefined;
+  resolveTurnExecutionStores: (input: ResolveTurnExecutionStoresInput) => Promise<TurnExecutionStores>;
+  /** Create, POST /events, and peered send-events, via the turn execution deps. */
+  sandboxEnvironmentStore: ISandboxEnvironmentStore;
+  /** Sandbox file download. */
+  sandboxProviderStore: ISandboxProviderStore;
+  sessions: Sessions;
+  sessionStore: ISessionStore;
 }
 
 /**
@@ -190,6 +203,38 @@ export type BeginTurnExecutionDeps = Pick<
   sessionStore: Pick<ISessionStore, 'getTurn'>;
   redis?: RedisClient | undefined;
 };
+
+async function referencedRunAsAgent(input: {
+  session: SessionHandle;
+  agentStore: IAgentStore;
+}): Promise<AgentRecord | undefined> {
+  if (input.session.record.agent.type !== 'reference') {
+    return undefined;
+  }
+  return input.agentStore.getAgent({
+    tenant_id: input.session.tenant_id,
+    id: input.session.record.agent.id,
+  });
+}
+
+async function executionDepsForCaller(input: {
+  deps: TurnsRouterDeps;
+  session: SessionHandle;
+  requestContext: RequestContext;
+  requestHeaders?: Record<string, string> | undefined;
+  runAsAgent?: AgentRecord;
+}): Promise<BeginTurnExecutionDeps> {
+  const stores = await input.deps.resolveTurnExecutionStores(input);
+  return {
+    activeTurns: input.deps.activeTurns,
+    eventSubscriptions: input.deps.eventSubscriptions,
+    logger: input.deps.logger,
+    sandboxEnvironmentStore: input.deps.sandboxEnvironmentStore,
+    sessionStore: input.deps.sessionStore,
+    redis: input.deps.redis,
+    ...stores,
+  };
+}
 
 interface BeginTurnExecutionParams {
   session: SessionHandle;
@@ -796,7 +841,7 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
     }
     const allowed = await canReadSession({
       shared: session.record.shared,
-      store: deps.resolveAgentStore(c),
+      store: deps.resolveAgentStore(requestContext),
       context: requestContext,
       authorizer: deps.authorizer,
       agent_id: session.record.agent.type === 'reference' ? session.record.agent.id : undefined,
@@ -831,7 +876,7 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
     }
     const allowed = await canReadSession({
       shared: session.record.shared,
-      store: deps.resolveAgentStore(c),
+      store: deps.resolveAgentStore(requestContext),
       context: requestContext,
       authorizer: deps.authorizer,
       agent_id: session.record.agent.type === 'reference' ? session.record.agent.id : undefined,
@@ -886,7 +931,7 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
 
       const provider = await resolveSandboxProvider({
         tenant_id: requestContext.tenant_id,
-        store: deps.resolveSandboxProviderStore(c),
+        store: deps.sandboxProviderStore,
         logger: deps.logger,
         sessionId,
       });
@@ -931,7 +976,7 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
     }
     const allowed = await canReadSession({
       shared: session.record.shared,
-      store: deps.resolveAgentStore(c),
+      store: deps.resolveAgentStore(requestContext),
       context: requestContext,
       authorizer: deps.authorizer,
       agent_id: session.record.agent.type === 'reference' ? session.record.agent.id : undefined,
@@ -983,7 +1028,7 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
     let referencedAgent: AgentRecord | undefined;
     if (session.record.agent.type === 'reference') {
       const agentId = session.record.agent.id;
-      const agent = await deps.resolveAgentStore(c).getAgent({
+      const agent = await deps.resolveAgentStore(requestContext).getAgent({
         tenant_id: requestContext.tenant_id,
         id: agentId,
       });
@@ -1002,31 +1047,19 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
     }
 
     // x-tfg-skills / x-tfg-mcp / x-tfg-models on turns only when the session agent is inline.
-    const allowInlineResources = session.record.agent.type === 'inline';
     const turnParams: BeginTurnExecutionParams = {
       session,
       input: body.input,
       previous_turn_id: body.previous_turn_id,
       userRef: requestContext.subject.id,
       requestHeaders: c.req.header(),
-      deps: {
-        ...deps,
-        modelProviderStore: deps.resolveModelProviderStore({
-          c,
-          allowInlineResources,
-          ...(referencedAgent !== undefined ? { runAsAgent: referencedAgent } : {}),
-        }),
-        mcpServerStore: deps.resolveMcpServerStore({
-          c,
-          allowInlineResources,
-          ...(referencedAgent !== undefined ? { runAsAgent: referencedAgent } : {}),
-        }),
-        skillStore: deps.resolveTurnSkillsStore({ c, allowInlineResources }),
-        agentStore: deps.resolveAgentStore(c),
-        sandboxProviderStore: deps.resolveSandboxProviderStore(c),
-        sandboxEnvironmentStore: deps.sandboxEnvironmentStore,
-        webSearchProviderStore: deps.resolveWebSearchProviderStore(c),
-      },
+      deps: await executionDepsForCaller({
+        deps,
+        session,
+        requestContext,
+        requestHeaders: c.req.header(),
+        ...(referencedAgent !== undefined ? { runAsAgent: referencedAgent } : {}),
+      }),
     };
 
     try {
@@ -1095,7 +1128,7 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
       return c.json({ error: { message: `Session not found: ${sessionId}` } }, 404);
     }
     const allowed = await canReadAgentBoundResource({
-      store: deps.resolveAgentStore(c),
+      store: deps.resolveAgentStore(requestContext),
       context: requestContext,
       authorizer: deps.authorizer,
       agent_id: session.record.agent.type === 'reference' ? session.record.agent.id : undefined,
@@ -1197,7 +1230,17 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
     const requestHeaders = c.req.header();
 
     return deps.activeTurns.withTurnLock({ sessionId, turnId }, async () => {
-      const executionDeps = await executionDepsForRequest(c, session);
+      const runAsAgent = await referencedRunAsAgent({
+        session,
+        agentStore: deps.resolveAgentStore(requestContext),
+      });
+      const executionDeps = await executionDepsForCaller({
+        deps,
+        session,
+        requestContext,
+        requestHeaders,
+        ...(runAsAgent !== undefined ? { runAsAgent } : {}),
+      });
       const result = await deliverTurnEvents({
         session,
         sessionStore: deps.sessionStore,
@@ -1232,38 +1275,6 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
     });
   };
 
-  async function executionDepsForRequest(c: Context, session: SessionHandle): Promise<BeginTurnExecutionDeps> {
-    let referencedAgent: AgentRecord | undefined;
-    if (session.record.agent.type === 'reference') {
-      referencedAgent = await deps.resolveAgentStore(c).getAgent({
-        tenant_id: session.tenant_id,
-        id: session.record.agent.id,
-      });
-    }
-    const allowInlineResources = session.record.agent.type === 'inline';
-    return {
-      activeTurns: deps.activeTurns,
-      eventSubscriptions: deps.eventSubscriptions,
-      logger: deps.logger,
-      sandboxEnvironmentStore: deps.sandboxEnvironmentStore,
-      agentStore: deps.resolveAgentStore(c),
-      modelProviderStore: deps.resolveModelProviderStore({
-        c,
-        allowInlineResources,
-        ...(referencedAgent !== undefined ? { runAsAgent: referencedAgent } : {}),
-      }),
-      mcpServerStore: deps.resolveMcpServerStore({
-        c,
-        allowInlineResources,
-        ...(referencedAgent !== undefined ? { runAsAgent: referencedAgent } : {}),
-      }),
-      skillStore: deps.resolveTurnSkillsStore({ c, allowInlineResources }),
-      sandboxProviderStore: deps.resolveSandboxProviderStore(c),
-      webSearchProviderStore: deps.resolveWebSearchProviderStore(c),
-      sessionStore: deps.sessionStore,
-    };
-  }
-
   const router = new OpenAPIHono();
   router.openapi(createAndExecuteTurnRoute, createAndExecuteTurnHandler);
   router.openapi(listTurnsRoute, listTurnsHandler);
@@ -1282,10 +1293,6 @@ function handlePeerTurnEvents(deps: TurnsRouterDeps): RequestReplyRouteHandler {
     if (!parsed.success) {
       return { status: 400, body: jsonValueFrom({ message: 'Invalid turns/send-events payload' }) };
     }
-    const createPeerTurnExecutionDeps = deps.createPeerTurnExecutionDeps;
-    if (!createPeerTurnExecutionDeps) {
-      return { status: 503, body: jsonValueFrom({ message: 'Turn owner is unavailable' }) };
-    }
     const session = await deps.sessions.get({
       tenant_id: parsed.data.tenant_id,
       session_id: parsed.data.session_id,
@@ -1297,10 +1304,16 @@ function handlePeerTurnEvents(deps: TurnsRouterDeps): RequestReplyRouteHandler {
       { sessionId: parsed.data.session_id, turnId: parsed.data.turn_id },
       async () => {
         const requestContext = requestContextFromWire(parsed.data.request_context);
-        const executionDeps = await createPeerTurnExecutionDeps({
+        const runAsAgent = await referencedRunAsAgent({
+          session,
+          agentStore: deps.resolveAgentStore(requestContext),
+        });
+        const executionDeps = await executionDepsForCaller({
+          deps,
           session,
           requestContext,
           requestHeaders: parsed.data.request_headers,
+          ...(runAsAgent !== undefined ? { runAsAgent } : {}),
         });
         return deliverTurnEvents({
           session,

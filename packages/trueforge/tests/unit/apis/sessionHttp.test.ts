@@ -116,21 +116,21 @@ describe('sessions HTTP agent binding', () => {
     resolveMcpServerStore = jest.fn(() => mcpServerStore);
     resolveSkillStore = jest.fn(() => skillStore);
     const deps: SessionsRouterDeps = {
-      sessions,
-      sessionStore,
       activeTurns: new ActiveTurnRegistry(),
-      resolveModelProviderStore,
-      resolveMcpServerStore,
-      resolveSkillStore,
-      resolveAgentStore: () => agentStore,
-      resolveSandboxProviderStore: () => sandboxProviderStore,
-      sandboxEnvironmentStore,
-      resolveWebSearchProviderStore: () => webSearchProviderStore,
+      authorizer: new TrueForgeAuthorizer(),
+      logger: createLogger({ silent: true }),
       redis: createClient(),
       requestReplyRouter: new RequestReplyRouter(),
+      resolveAgentStore: () => agentStore,
+      resolveMcpServerStore,
+      resolveModelProviderStore,
       resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
-      logger: createLogger({ silent: true }),
-      authorizer: new TrueForgeAuthorizer(),
+      resolveSkillStore,
+      sandboxEnvironmentStore,
+      sandboxProviderStore,
+      sessions,
+      sessionStore,
+      webSearchProviderStore,
     };
     sessionDeps = deps;
     app = new OpenAPIHono();
@@ -139,26 +139,30 @@ describe('sessions HTTP agent binding', () => {
     app.route(
       '/',
       createTurnsRouter({
+        activeTurns: deps.activeTurns,
+        authorizer: deps.authorizer,
+        eventSubscriptions: new EventSubscriptionRegistry(undefined),
+        logger: deps.logger,
+        requestReplyRouter: deps.requestReplyRouter,
+        resolveAgentStore: () => agentStore,
+        resolveRequestContext: deps.resolveRequestContext,
+        resolveTurnExecutionStores: () =>
+          Promise.resolve({
+            agentStore,
+            modelProviderStore,
+            mcpServerStore: new McpServerWithAuthStore({
+              store: mcpServerStore,
+              tokenStore,
+              clientName: 'test-client',
+            }),
+            skillStore,
+            sandboxProviderStore,
+            webSearchProviderStore,
+          }),
+        sandboxEnvironmentStore,
+        sandboxProviderStore,
         sessions,
         sessionStore,
-        activeTurns: deps.activeTurns,
-        resolveModelProviderStore: () => modelProviderStore,
-        resolveMcpServerStore: () =>
-          new McpServerWithAuthStore({
-            store: mcpServerStore,
-            tokenStore,
-            clientName: 'test-client',
-          }),
-        resolveTurnSkillsStore: () => skillStore,
-        resolveAgentStore: () => agentStore,
-        eventSubscriptions: new EventSubscriptionRegistry(undefined),
-        resolveSandboxProviderStore: () => sandboxProviderStore,
-        sandboxEnvironmentStore,
-        resolveWebSearchProviderStore: () => webSearchProviderStore,
-        logger: deps.logger,
-        resolveRequestContext: deps.resolveRequestContext,
-        requestReplyRouter: deps.requestReplyRouter,
-        authorizer: deps.authorizer,
       }),
     );
     app.route('/api/internal/sessions', createInternalSessionsRouter(deps));

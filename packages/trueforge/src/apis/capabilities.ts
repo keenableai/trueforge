@@ -1,5 +1,4 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
-import type { Context } from 'hono';
 import type { Logger } from 'winston';
 import { hasAdminRole, type ResolveRequestContext } from '../auth/identity';
 import type { ISandboxEnvironmentStore } from '../db/sandboxEnvironmentStore';
@@ -24,7 +23,7 @@ function skillDisabledReason(status: SandboxEnvironmentVersionStatus | undefined
 
 export function createCapabilitiesRouter<TTransaction>(deps: {
   sandboxEnvironmentStore: ISandboxEnvironmentStore<TTransaction>;
-  resolveWebSearchProviderStore: (c: Context) => IWebSearchProviderStore<TTransaction>;
+  webSearchProviderStore: IWebSearchProviderStore<TTransaction>;
   withTransaction: WithTransaction<TTransaction>;
   logger: Logger;
   resolveRequestContext: ResolveRequestContext;
@@ -46,7 +45,7 @@ export function createCapabilitiesRouter<TTransaction>(deps: {
     const settingsEnabled = hasAdminRole(requestContext);
     const webSearchEnabled = await hasConfiguredWebSearchProvider({
       tenant_id: requestContext.tenant_id,
-      store: deps.resolveWebSearchProviderStore(c),
+      store: deps.webSearchProviderStore,
     });
     return c.json(
       {

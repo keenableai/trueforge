@@ -44,7 +44,7 @@ import { MissingStoredSecretError } from '../utils/secretRedaction';
 export interface SandboxEnvironmentsRouterDeps<TTransaction> {
   sandboxEnvironmentStore: ISandboxEnvironmentStore<TTransaction>;
   resolveAgentStore: (c: Context) => IAgentStore<TTransaction>;
-  resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
+  sandboxProviderStore: ISandboxProviderStore<TTransaction>;
   resolveRequestContext: ResolveRequestContext;
   logger: Logger;
 }
@@ -146,10 +146,7 @@ export function createSandboxEnvironmentsRouter<TTransaction>(
     const created_by_subject = createdBySubjectFromRequestContext(requestContext);
 
     try {
-      const provider = await resolveSandboxProviderRecord(
-        deps.resolveSandboxProviderStore(c),
-        requestContext.tenant_id,
-      );
+      const provider = await resolveSandboxProviderRecord(deps.sandboxProviderStore, requestContext.tenant_id);
       if (provider === undefined) {
         return { kind: 'error', status: 422, message: 'No sandbox provider configured' };
       }
@@ -274,7 +271,7 @@ export function createSandboxEnvironmentsRouter<TTransaction>(
     try {
       const secrets = await store.listSecretsByEnvironment({ environment_id: existing.environment.id });
       if (secrets.length > 0) {
-        const provider = await resolveSandboxProviderRecord(deps.resolveSandboxProviderStore(c), tenant_id);
+        const provider = await resolveSandboxProviderRecord(deps.sandboxProviderStore, tenant_id);
         if (provider === undefined) {
           return c.json({ error: { message: 'No sandbox provider configured' } }, 422);
         }

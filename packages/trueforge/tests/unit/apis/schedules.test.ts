@@ -62,19 +62,19 @@ const scheduleBody = {
 function stubTurnExecutionDeps(agentStore: SqliteAgentStore, scheduleStore: SqliteScheduleStore) {
   const sessionStore = new InMemorySessionStore();
   return {
-    scheduleStore,
-    sessions: new Sessions({ sessionStore }),
-    agentStore,
     activeTurns: new ActiveTurnRegistry(),
+    agentStore,
     eventSubscriptions: new EventSubscriptionRegistry<TurnStreamingEvent>(undefined),
     logger: winston.createLogger({ silent: true }),
-    resolveModelProviderStore: () => ({}) as never,
     resolveMcpServerStore: () => ({}) as never,
+    resolveModelProviderStore: () => ({}) as never,
     resolveTurnSkillsStore: () => ({ resolveTurnSkills: async () => [] }),
-    resolveSandboxProviderStore: () => ({}) as never,
     sandboxEnvironmentStore: {} as never,
-    resolveWebSearchProviderStore: () => ({}) as never,
+    sandboxProviderStore: {} as never,
+    scheduleStore,
+    sessions: new Sessions({ sessionStore }),
     sessionStore,
+    webSearchProviderStore: {} as never,
   };
 }
 
