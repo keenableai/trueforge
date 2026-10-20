@@ -12,6 +12,8 @@ import { createTrueFoundryRequestContext } from '../truefoundry/accessToken';
 /** Standalone / default TrueForge admin role string. */
 export const STANDALONE_ADMIN_ROLE = 'admin';
 
+export const TRUEFOUNDRY_TENANT_ADMIN_ROLE = 'tenant-admin';
+
 export interface RequestSubject {
   id: string;
   type: string;
@@ -74,6 +76,26 @@ export function hasAdminRole(requestContext: Pick<RequestContext, 'roles'>): boo
     }
     case TrueForgeAuthMode.Standalone:
       return requestContext.roles.includes(STANDALONE_ADMIN_ROLE);
+  }
+}
+
+/**
+ * Whether the caller may create/update/delete sandbox environments.
+ * - TrueFoundry: only `tenant-admin`
+ * - OIDC / Standalone: create for any authenticated caller; update/delete for the creator
+ */
+export function canWriteSandboxEnvironment(input: {
+  requestContext: Pick<RequestContext, 'roles' | 'subject'>;
+  /** When set, update/delete of an existing env (OIDC/Standalone creator check). */
+  existingCreatorSubjectId?: string;
+}): boolean {
+  const { requestContext, existingCreatorSubjectId } = input;
+  switch (getTrueForgeAuthMode()) {
+    case TrueForgeAuthMode.TrueFoundry:
+      return requestContext.roles.includes(TRUEFOUNDRY_TENANT_ADMIN_ROLE);
+    case TrueForgeAuthMode.Oidc:
+    case TrueForgeAuthMode.Standalone:
+      return existingCreatorSubjectId === undefined || existingCreatorSubjectId === requestContext.subject.id;
   }
 }
 

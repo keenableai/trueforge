@@ -1,10 +1,21 @@
 import { Hono } from 'hono';
 import {
+  canWriteSandboxEnvironment,
   hasAdminRole,
   requestContextFromCreatedBySubject,
   resolveRequestContext,
   STANDALONE_REQUEST_CONTEXT,
+  TRUEFOUNDRY_TENANT_ADMIN_ROLE,
 } from '../../../src/auth/identity';
+import { getTrueForgeAuthMode, TrueForgeAuthMode } from '../../../src/config';
+
+jest.mock('../../../src/config', () => {
+  const actual = jest.requireActual<typeof import('../../../src/config')>('../../../src/config');
+  return {
+    ...actual,
+    getTrueForgeAuthMode: jest.fn(() => actual.TrueForgeAuthMode.Standalone),
+  };
+});
 
 describe('STANDALONE_REQUEST_CONTEXT', () => {
   it('has the fixed standalone identity shape', () => {
@@ -44,6 +55,33 @@ describe('hasAdminRole', () => {
     expect(hasAdminRole({ roles: ['admin'] })).toBe(true);
     expect(hasAdminRole({ roles: ['everyone'] })).toBe(false);
     expect(hasAdminRole(STANDALONE_REQUEST_CONTEXT)).toBe(true);
+  });
+});
+
+describe('canWriteSandboxEnvironment', () => {
+  afterEach(() => {
+    jest.mocked(getTrueForgeAuthMode).mockReturnValue(TrueForgeAuthMode.Standalone);
+  });
+
+  it('allows create for any subject and update/delete only for the creator in standalone', () => {
+    const alice = { roles: ['admin'], subject: { id: 'alice', type: 'user', display_name: 'alice' } };
+    const bob = { roles: ['admin'], subject: { id: 'bob', type: 'user', display_name: 'bob' } };
+    expect(canWriteSandboxEnvironment({ requestContext: alice })).toBe(true);
+    expect(canWriteSandboxEnvironment({ requestContext: alice, existingCreatorSubjectId: 'alice' })).toBe(true);
+    expect(canWriteSandboxEnvironment({ requestContext: bob, existingCreatorSubjectId: 'alice' })).toBe(false);
+  });
+
+  it('allows only tenant-admin writes in TrueFoundry mode', () => {
+    jest.mocked(getTrueForgeAuthMode).mockReturnValue(TrueForgeAuthMode.TrueFoundry);
+    const admin = {
+      roles: [TRUEFOUNDRY_TENANT_ADMIN_ROLE],
+      subject: { id: 'admin', type: 'user', display_name: 'admin' },
+    };
+    const alice = { roles: ['everyone'], subject: { id: 'alice', type: 'user', display_name: 'alice' } };
+    expect(canWriteSandboxEnvironment({ requestContext: alice })).toBe(false);
+    expect(canWriteSandboxEnvironment({ requestContext: alice, existingCreatorSubjectId: 'alice' })).toBe(false);
+    expect(canWriteSandboxEnvironment({ requestContext: admin })).toBe(true);
+    expect(canWriteSandboxEnvironment({ requestContext: admin, existingCreatorSubjectId: 'alice' })).toBe(true);
   });
 });
 
