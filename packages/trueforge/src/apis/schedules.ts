@@ -347,7 +347,7 @@ export function createSchedulesRouter<TTransaction>(deps: SchedulesRouterDeps<TT
     try {
       await startScheduleRunOnRequest({ c, item: { run, schedule }, deps });
     } catch (error) {
-      await deps.scheduleStore.updateRunStatus({
+      await deps.scheduleStore.updateRun({
         tenant_id: requestContext.tenant_id,
         id: run.id,
         status: 'failed',

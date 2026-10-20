@@ -90,7 +90,7 @@ export async function startScheduleRun<TTransaction>(params: {
   item: ScheduleDispatchItem;
   sessions: Sessions;
   agentStore: IAgentStore;
-  scheduleStore: Pick<IScheduleStore<TTransaction>, 'setRunSessionId'>;
+  scheduleStore: Pick<IScheduleStore<TTransaction>, 'updateRun'>;
 }): Promise<PreparedScheduleTurn | undefined> {
   const {
     item: { run, schedule },
@@ -113,7 +113,7 @@ export async function startScheduleRun<TTransaction>(params: {
   });
 
   // Before the idempotency check so a retried run whose turn already exists still gets linked.
-  await scheduleStore.setRunSessionId({
+  await scheduleStore.updateRun({
     tenant_id: schedule.tenant_id,
     id: run.id,
     session_id: session.session_id,
@@ -173,7 +173,7 @@ async function finishScheduledRun<TTransaction>(params: {
   await withTransaction(async txn => {
     const latest = await store.getScheduleForUpdate({ tenant_id: run.tenant_id, id: run.schedule_id }, txn);
 
-    const updated = await store.updateRunStatus(
+    const updated = await store.updateRun(
       { tenant_id: run.tenant_id, id: run.id, status, reason: reason ?? null },
       txn,
     );

@@ -68,7 +68,7 @@ function fakeStore(dispatchItem: ScheduleDispatchItem) {
     listScheduledRuns: jest.fn().mockResolvedValue([dispatchItem.run]),
     getSchedule: jest.fn().mockResolvedValue(dispatchItem.schedule),
     getScheduleForUpdate: jest.fn().mockResolvedValue(dispatchItem.schedule),
-    updateRunStatus: jest.fn().mockResolvedValue(dispatchItem.run satisfies ScheduleRunRecord),
+    updateRun: jest.fn().mockResolvedValue(dispatchItem.run satisfies ScheduleRunRecord),
     createRun: jest.fn().mockResolvedValue(undefined),
   };
 }
@@ -140,17 +140,17 @@ describe('startScheduleRun', () => {
     const session = { session_id: 'session-1', listTurns };
     const getOrCreateByExternalId = jest.fn().mockResolvedValue({ session, created: true });
     const getAgent = jest.fn().mockResolvedValue({ id: 'agent-1', name: 'reporter' });
-    const setRunSessionId = jest.fn().mockResolvedValue(undefined);
+    const updateRun = jest.fn().mockResolvedValue(undefined);
 
     const prepared = await startScheduleRun({
       item: dispatchItem,
       sessions: { getOrCreateByExternalId } as never,
       agentStore: { getAgent } as never,
-      scheduleStore: { setRunSessionId },
+      scheduleStore: { updateRun },
     });
 
     expect(getAgent).toHaveBeenCalledWith({ tenant_id: 'default', name: 'reporter' });
-    expect(setRunSessionId).toHaveBeenCalledWith({ tenant_id: 'default', id: 'run-1', session_id: 'session-1' });
+    expect(updateRun).toHaveBeenCalledWith({ tenant_id: 'default', id: 'run-1', session_id: 'session-1' });
     expect(getOrCreateByExternalId).toHaveBeenCalledWith({
       tenant_id: 'default',
       external_id: 'run-1',
@@ -174,30 +174,30 @@ describe('startScheduleRun', () => {
       created: false,
     });
     const getAgent = jest.fn().mockResolvedValue({ id: 'agent-1', name: 'reporter' });
-    const setRunSessionId = jest.fn().mockResolvedValue(undefined);
+    const updateRun = jest.fn().mockResolvedValue(undefined);
 
     const prepared = await startScheduleRun({
       item: item(),
       sessions: { getOrCreateByExternalId } as never,
       agentStore: { getAgent } as never,
-      scheduleStore: { setRunSessionId },
+      scheduleStore: { updateRun },
     });
 
     expect(prepared).toBeUndefined();
-    expect(setRunSessionId).toHaveBeenCalledWith({ tenant_id: 'default', id: 'run-1', session_id: 'session-1' });
+    expect(updateRun).toHaveBeenCalledWith({ tenant_id: 'default', id: 'run-1', session_id: 'session-1' });
   });
 
   it('throws without linking when the schedule agent is missing', async () => {
-    const setRunSessionId = jest.fn();
+    const updateRun = jest.fn();
     await expect(
       startScheduleRun({
         item: item(),
         sessions: { getOrCreateByExternalId: jest.fn() } as never,
         agentStore: { getAgent: jest.fn().mockResolvedValue(undefined) } as never,
-        scheduleStore: { setRunSessionId },
+        scheduleStore: { updateRun },
       }),
     ).rejects.toBeInstanceOf(ScheduleAgentNotFoundError);
-    expect(setRunSessionId).not.toHaveBeenCalled();
+    expect(updateRun).not.toHaveBeenCalled();
   });
 });
 

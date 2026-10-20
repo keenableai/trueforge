@@ -184,17 +184,14 @@ export interface GetScheduledRunForInput {
   schedule_id: string;
 }
 
-export interface UpdateScheduleRunStatusInput {
+/** Patch for one run; omitted fields are left unchanged. */
+export interface UpdateScheduleRunInput {
   tenant_id: string;
   id: string;
-  status: ScheduleRunStatus;
+  status?: ScheduleRunStatus;
+  /** Only applied with `status`; kept for `failed`, cleared otherwise. */
   reason?: string | null;
-}
-
-export interface SetRunSessionIdInput {
-  tenant_id: string;
-  id: string;
-  session_id: string;
+  session_id?: string;
 }
 
 export class ScheduleRunConflictError extends Error {
@@ -281,15 +278,10 @@ export interface IScheduleStore<TTransaction = never> {
   /** Inserts a run. Throws {@link ScheduleRunConflictError} on either unique index. */
   createRun(input: CreateScheduleRunInput, transaction?: TTransaction): Promise<ScheduleRunRecord>;
   /**
-   * Status transition. Stamps `triggered_at` when moving to `triggered`.
+   * Patches a run. A status change stamps `triggered_at` when moving to `triggered`.
    * Returns undefined when the row is gone (e.g. pause deleted it).
    */
-  updateRunStatus(
-    input: UpdateScheduleRunStatusInput,
-    transaction?: TTransaction,
-  ): Promise<ScheduleRunRecord | undefined>;
-  /** Records the session a run created. Returns undefined when the row is gone. */
-  setRunSessionId(input: SetRunSessionIdInput, transaction?: TTransaction): Promise<ScheduleRunRecord | undefined>;
+  updateRun(input: UpdateScheduleRunInput, transaction?: TTransaction): Promise<ScheduleRunRecord | undefined>;
   /**
    * `scheduled` runs with `scheduled_for <= now`, oldest first.
    * Triggered / terminal rows are never returned.

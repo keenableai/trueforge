@@ -351,7 +351,7 @@ describe('create schedule run', () => {
   it('returns the linked session_id from run-now and the runs list', async () => {
     const { app, asUser, postJson } = await setup();
     mockedStartScheduleRun.mockImplementation(async ({ item, scheduleStore }) => {
-      await scheduleStore.setRunSessionId({ tenant_id: item.run.tenant_id, id: item.run.id, session_id: 'session-1' });
+      await scheduleStore.updateRun({ tenant_id: item.run.tenant_id, id: item.run.id, session_id: 'session-1' });
       return undefined;
     });
 
