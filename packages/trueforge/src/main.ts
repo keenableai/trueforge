@@ -829,6 +829,7 @@ async function createServerRuntime<TTransaction>(persistence: ServerPersistence<
       ),
       sandboxProviderStore: persistence.resolveSandboxProviderStore(requestContext),
       webSearchProviderStore: persistence.resolveWebSearchProviderStore(requestContext),
+      sessionStore,
     };
   };
   const app = createServerApp({

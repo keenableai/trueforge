@@ -68,10 +68,20 @@ export interface SessionsRouterDeps {
   resolveAgentStore: (c: Context) => IAgentStore;
   resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore;
   sandboxEnvironmentStore: ISandboxEnvironmentStore;
-  redis?: RedisClient | undefined;
   resolveWebSearchProviderStore: (c: Context) => IWebSearchProviderStore;
-  requestReplyRouter: RequestReplyRouter;
   resolveRequestContext: ResolveRequestContext;
+  /**
+   * Publishes to another executor:
+   *  - Creating the next turn -> redis request `sessions/cancel`
+   * when the previous run is not in this process.
+   * Unset in standalone.
+   */
+  redis?: RedisClient | undefined;
+  /**
+   * Used to register routes
+   * - `sessions/cancel` -> {@link cancelSessionTurnPeerHandler}
+   */
+  requestReplyRouter: RequestReplyRouter;
   logger: Logger;
   authorizer: Authorizer;
 }

@@ -1,6 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import type { AgentSpec } from '@truefoundry/trueforge-core/agent-session';
 import { AgentSpecSchema, Sessions } from '@truefoundry/trueforge-core/agent-session';
+import { RequestReplyRouter } from '@truefoundry/trueforge-core/request-reply';
 import { createLogger } from 'winston';
 import { createTurnsRouter, toContentDisposition } from '../../../src/apis/turns';
 import { TrueForgeAuthorizer } from '../../../src/auth/authorizer';
@@ -57,6 +58,7 @@ async function buildApp() {
       resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
       logger: createLogger({ silent: true }),
       resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+      requestReplyRouter: new RequestReplyRouter(),
       authorizer: new TrueForgeAuthorizer(),
     }),
   );

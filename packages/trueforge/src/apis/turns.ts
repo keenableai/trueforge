@@ -32,7 +32,11 @@ import {
   VercelAILLM,
   withTimeout,
 } from '@truefoundry/trueforge-core/core';
-import type { JSONReply, RedisClient, RequestReplyRouter } from '@truefoundry/trueforge-core/request-reply';
+import type {
+  RedisClient,
+  RouteHandler as RequestReplyRouteHandler,
+  RequestReplyRouter,
+} from '@truefoundry/trueforge-core/request-reply';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { streamSSE } from 'hono/streaming';
@@ -140,13 +144,23 @@ export interface TurnsRouterDeps {
   logger: Logger;
   resolveRequestContext: ResolveRequestContext;
   authorizer: Authorizer;
-  /** Present when this replica can forward events to the database owner. */
-  redis?: RedisClient | undefined;
-  /** Present when this replica serves peer turn-event requests. */
-  requestReplyRouter?: RequestReplyRouter | undefined;
   /**
-   * Store bundle for a peer rebuild, which has no inbound HTTP context.
-   * The client-facing handler uses the request's own stores instead.
+   * Publishes to another executor:
+   *  - POST /events -> redis request `turns/send-events`
+   *  - Creating the next turn -> redis request `sessions/cancel`
+   * when the previous run is not in this process.
+   * Unset in standalone.
+   */
+  redis?: RedisClient | undefined;
+  /**
+   * Used to register routes
+   * - `turns/send-events` -> {@link handlePeerTurnEvents}
+   */
+  requestReplyRouter: RequestReplyRouter;
+  /**
+   * Builds model, MCP, and skill stores for that inbound rebuild. The peer body carries
+   * the caller's request context and headers, and there is no Hono context. POST /events
+   * on this process builds the same stores from the HTTP request instead.
    */
   createPeerTurnExecutionDeps?:
     | ((input: {
@@ -172,8 +186,8 @@ export type BeginTurnExecutionDeps = Pick<
   sandboxProviderStore: ISandboxProviderStore;
   webSearchProviderStore: IWebSearchProviderStore;
   skillStore: Pick<ISkillStore, 'resolveTurnSkills'>;
-  /** Present on the HTTP create path so a previous turn can be superseded on its owner. */
-  sessionStore?: Pick<ISessionStore, 'getTurn'> | undefined;
+  /** Loads the previous turn when create must cancel a run that is not in this process. */
+  sessionStore: Pick<ISessionStore, 'getTurn'>;
   redis?: RedisClient | undefined;
 };
 
@@ -520,7 +534,7 @@ export async function beginTurnExecution(
       turnId: previousId,
       abortReason: CancellationReason.CancelledForNextTurn,
     });
-    if (!hadLocalRun && deps.sessionStore) {
+    if (!hadLocalRun) {
       await cancelSessionTurn(
         {
           activeTurns: deps.activeTurns,
@@ -1246,6 +1260,7 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
       skillStore: deps.resolveTurnSkillsStore({ c, allowInlineResources }),
       sandboxProviderStore: deps.resolveSandboxProviderStore(c),
       webSearchProviderStore: deps.resolveWebSearchProviderStore(c),
+      sessionStore: deps.sessionStore,
     };
   }
 
@@ -1257,70 +1272,70 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
   router.openapi(listTurnEventsRoute, listTurnEventsHandler);
   router.openapi(postTurnEventsRoute, postTurnEventsHandler);
   router.openapi(subscribeTurnRoute, subscribeTurnHandler);
-  if (deps.requestReplyRouter) {
-    deps.requestReplyRouter.registerRoute(TURNS_SEND_EVENTS_PATH, request => handlePeerTurnEvents(deps, request));
-  }
+  deps.requestReplyRouter.registerRoute(TURNS_SEND_EVENTS_PATH, handlePeerTurnEvents(deps));
   return router;
 }
 
-async function handlePeerTurnEvents(deps: TurnsRouterDeps, request: { body: unknown }): Promise<JSONReply> {
-  const parsed = SendEventsPeerBodySchema.safeParse(request.body);
-  if (!parsed.success) {
-    return { status: 400, body: jsonValueFrom({ message: 'Invalid turns/send-events payload' }) };
-  }
-  const createPeerTurnExecutionDeps = deps.createPeerTurnExecutionDeps;
-  if (!createPeerTurnExecutionDeps) {
-    return { status: 503, body: jsonValueFrom({ message: 'Turn owner is unavailable' }) };
-  }
-  const session = await deps.sessions.get({
-    tenant_id: parsed.data.tenant_id,
-    session_id: parsed.data.session_id,
-  });
-  if (!session) {
-    return { status: 404, body: jsonValueFrom({ message: `Session not found: ${parsed.data.session_id}` }) };
-  }
-  const result = await deps.activeTurns.withTurnLock(
-    { sessionId: parsed.data.session_id, turnId: parsed.data.turn_id },
-    async () => {
-      const requestContext = requestContextFromWire(parsed.data.request_context);
-      const executionDeps = await createPeerTurnExecutionDeps({
-        session,
-        requestContext,
-        requestHeaders: parsed.data.request_headers,
-      });
-      return deliverTurnEvents({
-        session,
-        sessionStore: deps.sessionStore,
-        activeTurns: deps.activeTurns,
-        turnId: parsed.data.turn_id,
-        events: parsed.data.events,
-        redis: undefined,
-        logger: deps.logger,
-        allowSteal: false,
-        requestContext,
-        requestHeaders: parsed.data.request_headers,
-        resume: () =>
-          resumePausedTurn({
-            session,
-            turnId: parsed.data.turn_id,
-            requestContext,
-            requestHeaders: parsed.data.request_headers,
-            deps: executionDeps,
-          }),
-      });
-    },
-  );
-  if (result.type === 'applied') {
-    return { status: 200, body: jsonValueFrom({ events: result.events }) };
-  }
-  if (result.type === 'invalid') {
-    return { status: 400, body: jsonValueFrom({ message: result.message }) };
-  }
-  if (result.type === 'not_owner') {
-    return { status: 412, body: jsonValueFrom({ message: 'Turn is not running on this executor' }) };
-  }
-  if (result.type === 'conflict') {
-    return { status: 409, body: jsonValueFrom({ message: result.message }) };
-  }
-  return { status: 503, body: jsonValueFrom({ message: result.message }) };
+function handlePeerTurnEvents(deps: TurnsRouterDeps): RequestReplyRouteHandler {
+  return async request => {
+    const parsed = SendEventsPeerBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return { status: 400, body: jsonValueFrom({ message: 'Invalid turns/send-events payload' }) };
+    }
+    const createPeerTurnExecutionDeps = deps.createPeerTurnExecutionDeps;
+    if (!createPeerTurnExecutionDeps) {
+      return { status: 503, body: jsonValueFrom({ message: 'Turn owner is unavailable' }) };
+    }
+    const session = await deps.sessions.get({
+      tenant_id: parsed.data.tenant_id,
+      session_id: parsed.data.session_id,
+    });
+    if (!session) {
+      return { status: 404, body: jsonValueFrom({ message: `Session not found: ${parsed.data.session_id}` }) };
+    }
+    const result = await deps.activeTurns.withTurnLock(
+      { sessionId: parsed.data.session_id, turnId: parsed.data.turn_id },
+      async () => {
+        const requestContext = requestContextFromWire(parsed.data.request_context);
+        const executionDeps = await createPeerTurnExecutionDeps({
+          session,
+          requestContext,
+          requestHeaders: parsed.data.request_headers,
+        });
+        return deliverTurnEvents({
+          session,
+          sessionStore: deps.sessionStore,
+          activeTurns: deps.activeTurns,
+          turnId: parsed.data.turn_id,
+          events: parsed.data.events,
+          redis: undefined,
+          logger: deps.logger,
+          allowSteal: false,
+          requestContext,
+          requestHeaders: parsed.data.request_headers,
+          resume: () =>
+            resumePausedTurn({
+              session,
+              turnId: parsed.data.turn_id,
+              requestContext,
+              requestHeaders: parsed.data.request_headers,
+              deps: executionDeps,
+            }),
+        });
+      },
+    );
+    if (result.type === 'applied') {
+      return { status: 200, body: jsonValueFrom({ events: result.events }) };
+    }
+    if (result.type === 'invalid') {
+      return { status: 400, body: jsonValueFrom({ message: result.message }) };
+    }
+    if (result.type === 'not_owner') {
+      return { status: 412, body: jsonValueFrom({ message: 'Turn is not running on this executor' }) };
+    }
+    if (result.type === 'conflict') {
+      return { status: 409, body: jsonValueFrom({ message: result.message }) };
+    }
+    return { status: 503, body: jsonValueFrom({ message: result.message }) };
+  };
 }

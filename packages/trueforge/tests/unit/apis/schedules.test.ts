@@ -74,6 +74,7 @@ function stubTurnExecutionDeps(agentStore: SqliteAgentStore, scheduleStore: Sqli
     resolveSandboxProviderStore: () => ({}) as never,
     sandboxEnvironmentStore: {} as never,
     resolveWebSearchProviderStore: () => ({}) as never,
+    sessionStore,
   };
 }
 

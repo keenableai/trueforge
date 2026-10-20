@@ -4,6 +4,7 @@
 import { OpenAPIHono, type RouteHandler } from '@hono/zod-openapi';
 import {
   InvalidPageTokenError,
+  type ISessionStore,
   type Sessions,
   type TurnStreamingEvent,
 } from '@truefoundry/trueforge-core/agent-session';
@@ -82,6 +83,8 @@ export interface ScheduleTurnExecutionDeps<TTransaction> {
   agentStore: IAgentStore<TTransaction>;
   /** Call with `{}` — schedules have no caller `x-tfg-skills`. */
   resolveTurnSkillsStore: (input: ResolveTurnSkillsStoreInput) => Pick<ISkillStore, 'resolveTurnSkills'>;
+  /** Previous-turn cancel when a schedule run supersedes a turn that is not in this process. */
+  sessionStore: Pick<ISessionStore, 'getTurn'>;
 }
 
 export interface SchedulesRouterDeps<TTransaction> extends ScheduleTurnExecutionDeps<TTransaction> {
@@ -125,6 +128,7 @@ export async function startScheduleRunOnRequest<TTransaction>(params: {
       webSearchProviderStore: deps.resolveWebSearchProviderStore(c),
       skillStore: deps.resolveTurnSkillsStore({}),
       logger: deps.logger,
+      sessionStore: deps.sessionStore,
     },
   });
 }

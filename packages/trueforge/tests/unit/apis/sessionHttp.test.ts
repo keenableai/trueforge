@@ -157,6 +157,7 @@ describe('sessions HTTP agent binding', () => {
         resolveWebSearchProviderStore: () => webSearchProviderStore,
         logger: deps.logger,
         resolveRequestContext: deps.resolveRequestContext,
+        requestReplyRouter: deps.requestReplyRouter,
         authorizer: deps.authorizer,
       }),
     );

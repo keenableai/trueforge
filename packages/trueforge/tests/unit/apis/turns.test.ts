@@ -6,6 +6,7 @@ import {
   type TurnInputItem,
   type TurnStreamingEvent,
 } from '@truefoundry/trueforge-core/agent-session';
+import { RequestReplyRouter } from '@truefoundry/trueforge-core/request-reply';
 import type { Kysely } from 'kysely';
 import { createLogger } from 'winston';
 import { createTurnsRouter, deriveSessionTitle, turnStreamId } from '../../../src/apis/turns';
@@ -131,6 +132,7 @@ describe('turns', () => {
           resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
           logger: createLogger({ silent: true }),
           resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          requestReplyRouter: new RequestReplyRouter(),
           authorizer: new TrueForgeAuthorizer(),
         }),
       );
@@ -227,6 +229,7 @@ describe('turns', () => {
           resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
           logger: createLogger({ silent: true }),
           resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          requestReplyRouter: new RequestReplyRouter(),
           authorizer: {
             listAgentAccess: input =>
               Promise.resolve(
@@ -329,6 +332,7 @@ describe('turns', () => {
           resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
           logger: createLogger({ silent: true }),
           resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          requestReplyRouter: new RequestReplyRouter(),
           authorizer: new TrueForgeAuthorizer(),
         }),
       );
@@ -400,6 +404,7 @@ describe('turns', () => {
           resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
           logger: createLogger({ silent: true }),
           resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          requestReplyRouter: new RequestReplyRouter(),
           authorizer: new TrueForgeAuthorizer(),
         }),
       );
@@ -508,6 +513,7 @@ describe('turns', () => {
           resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
           logger,
           resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          requestReplyRouter: new RequestReplyRouter(),
           authorizer: new TrueForgeAuthorizer(),
         }),
       );
@@ -617,6 +623,7 @@ describe('turns', () => {
           resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
           logger,
           resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          requestReplyRouter: new RequestReplyRouter(),
           authorizer: new TrueForgeAuthorizer(),
         }),
       );
@@ -704,6 +711,7 @@ describe('turns', () => {
           resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
           logger: createLogger({ silent: true }),
           resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+          requestReplyRouter: new RequestReplyRouter(),
           authorizer,
         }),
       );

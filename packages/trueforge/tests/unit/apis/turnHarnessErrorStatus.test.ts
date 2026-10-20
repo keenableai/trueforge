@@ -1,6 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import type { Sessions } from '@truefoundry/trueforge-core/agent-session';
 import { AgentHarnessError } from '@truefoundry/trueforge-core/core';
+import { RequestReplyRouter } from '@truefoundry/trueforge-core/request-reply';
 import { createLogger } from 'winston';
 import { createTurnsRouter } from '../../../src/apis/turns';
 import { createAppErrorHandler } from '../../../src/app';
@@ -86,6 +87,7 @@ async function postTurnRejectingWith(error: AgentHarnessError): Promise<Response
       resolveWebSearchProviderStore: () => new SqliteWebSearchProviderStore(db),
       logger: createLogger({ silent: true }),
       resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+      requestReplyRouter: new RequestReplyRouter(),
       authorizer: new TrueForgeAuthorizer(),
     }),
   );

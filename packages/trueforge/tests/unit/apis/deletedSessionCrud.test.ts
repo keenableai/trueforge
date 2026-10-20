@@ -80,6 +80,7 @@ describe('public CRUD after session deletion', () => {
         resolveWebSearchProviderStore: () => webSearchProviderStore,
         logger: createLogger({ silent: true }),
         resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
+        requestReplyRouter: new RequestReplyRouter(),
         authorizer: new TrueForgeAuthorizer(),
       }),
     );

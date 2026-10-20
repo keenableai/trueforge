@@ -273,11 +273,11 @@ export interface ServerDeps<TTransaction> {
   sandboxProviderStore: ISandboxProviderStore<TTransaction>;
   sessions: Sessions;
   activeTurns: ActiveTurnRegistry;
-  /** Primary Redis client (server-owned); undefined in standalone mode. */
+  /** Redis client used for redis request-reply */
   redis?: RedisClient | undefined;
-  /** Request-reply dispatch table served by this replica's executor. */
+  /** Redis request-reply router for registering peer handlers. */
   requestReplyRouter: RequestReplyRouter;
-  /** Store bundle for rebuilding a paused turn on a peer request, which has no HTTP context. */
+  /** Store factory for a peered rebuild. The peer body has no Hono context. */
   createPeerTurnExecutionDeps: (input: {
     session: SessionHandle;
     requestContext: RequestContext;
@@ -313,6 +313,7 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
     resolveWebSearchProviderStore: deps.resolveWebSearchProviderStore,
     activeTurns: deps.activeTurns,
     resolveTurnSkillsStore: deps.resolveTurnSkillsStore,
+    sessionStore: deps.sessionStore,
   };
 
   const httpMetrics = createHttpMetrics();
