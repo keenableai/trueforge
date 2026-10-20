@@ -52,7 +52,7 @@ export class InMemoryEventStreamStore<T extends object> {
   }
 
   /** Refreshes TTL on a live stream. Sequence numbers already follow the log length. */
-  rearm(streamId: string, streamTTLSeconds?: number): void {
+  refreshStreamTtl(streamId: string, streamTTLSeconds?: number): void {
     const stream = this.getLiveStream(streamId);
     if (!stream || !streamTTLSeconds || streamTTLSeconds <= 0) {
       return;
@@ -124,7 +124,7 @@ export class InMemoryEventSubscription<T extends object> implements EventSubscri
   ) {}
 
   resumeProducer(options?: EventSubscriptionPutOptions): Promise<void> {
-    this.store.rearm(this.streamId, options?.streamTTLSeconds);
+    this.store.refreshStreamTtl(this.streamId, options?.streamTTLSeconds);
     return Promise.resolve();
   }
 
