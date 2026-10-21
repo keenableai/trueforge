@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { useTrackAnalytics } from '../analytics/AnalyticsProvider.js';
 import { AnalyticsEvents } from '../analytics/events.js';
@@ -15,17 +15,20 @@ import type { AgentLibraryEntry, AgentSpec, CreatedBySubject, Schedule } from '.
 import { useSlot } from '../theme/SlotsProvider.js';
 import { readLibraryShareSearch, replaceLibraryShareSearch } from '../utils/libraryShareUrl.js';
 import { replaceScheduleShareSearch } from '../utils/scheduleShareUrl.js';
+import {
+  AgentLastRunCell,
+  AgentLibrarySparklineCell,
+  AgentSessionsCell,
+  AgentSpendCell,
+  agentLibraryUsageLabels,
+} from './AgentLibraryUsage.js';
 import { AgentOverflowMenu } from './AgentOverflowMenu.js';
 import { CreatedByCell } from './CreatedByCell.js';
 import { EmptyScreen, EmptyScreenQueryHighlight } from './EmptyScreen.js';
 import { cn } from './lib/cn.js';
 import { isMobileNavDrawerOpen } from './lib/isMobileNavDrawerOpen.js';
 import { mountName } from './lib/mountName.js';
-import {
-  useAgentLibraryUsageStats,
-  type AgentLibraryDailyPoint,
-  type AgentLibraryUsageStats,
-} from './lib/useAgentLibraryUsageStats.js';
+import { useAgentLibraryUsageStats, type AgentLibraryUsageStats } from './lib/useAgentLibraryUsageStats.js';
 import { useIsMobile } from './lib/useIsMobile.js';
 import { useSearchAgentsList } from './lib/useSearchAgentsList.js';
 import { PageHeader } from './PageHeader.js';
@@ -69,7 +72,6 @@ export type AgentLibraryRowProps = {
   canManageSchedules: boolean;
   scheduleSummary?: AgentScheduleSummary | null;
   usage?: AgentLibraryUsageStats;
-  usageLoading?: boolean;
   showMetricsColumns?: boolean;
   showLastRunColumn?: boolean;
   onOpenSchedules?: () => void;
@@ -86,33 +88,6 @@ export type AgentLibraryRowProps = {
 function displayModelLabel(modelName: string): string {
   const slash = modelName.lastIndexOf('/');
   return slash >= 0 ? modelName.slice(slash + 1) : modelName;
-}
-
-/** Listing spend (e.g. $151.85). */
-function formatLibraryCostUsd(costInUsd: number): string {
-  return `$${costInUsd.toFixed(2)}`;
-}
-
-/** Compact last-run age matching the denser library mock (e.g. 29m ago). */
-function formatLastRunAgo(iso: string | null | undefined, nowMs = Date.now()): string {
-  if (iso == null) return 'Never';
-  const then = Date.parse(iso);
-  if (Number.isNaN(then)) return 'Never';
-  const diffMs = Math.max(0, nowMs - then);
-  const minutes = Math.floor(diffMs / 60_000);
-  if (minutes < 60) return `${String(Math.max(1, minutes))}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${String(hours)}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${String(days)}d ago`;
-}
-
-function toolsSummaryLabel({ skillsCount, mcpCount }: { skillsCount: number; mcpCount: number }): string {
-  if (skillsCount === 0 && mcpCount === 0) return 'no tools';
-  const parts: string[] = [];
-  if (mcpCount > 0) parts.push(`${String(mcpCount)} MCP`);
-  if (skillsCount > 0) parts.push(`${String(skillsCount)} skill${skillsCount === 1 ? '' : 's'}`);
-  return parts.join(' • ');
 }
 
 /** Sectioned list tooltip for MCP / skill mounts (one name per line). */
@@ -236,9 +211,6 @@ function AgentConfigurationSummary({
       </span>
     );
   }
-  const toolsLabel = toolsSummaryLabel({ skillsCount, mcpCount });
-  const mcpAria = mcpCount > 0 ? `MCP: ${mcpNames.join(', ')}` : null;
-  const skillsAria = skillsCount > 0 ? `Skills: ${skillNames.join(', ')}` : null;
 
   return (
     <div className={cn('flex min-w-0 flex-col gap-0.5', className)}>
@@ -252,7 +224,7 @@ function AgentConfigurationSummary({
         <span className="text-text-secondary text-sm">—</span>
       )}
       {mcpCount === 0 && skillsCount === 0 ? (
-        <span className="text-text-secondary text-xs">{toolsLabel}</span>
+        <span className="text-text-secondary text-xs">no tools</span>
       ) : (
         <span className="text-text-secondary inline-flex min-w-0 flex-wrap items-center gap-x-1 text-xs">
           {mcpCount > 0 ? (
@@ -260,7 +232,7 @@ function AgentConfigurationSummary({
               content={mountNamesTooltip({ title: 'MCP', names: mcpNames })}
               className="max-w-xs whitespace-normal"
             >
-              <span className="cursor-default" aria-label={mcpAria ?? undefined}>
+              <span className="cursor-default" aria-label={`MCP: ${mcpNames.join(', ')}`}>
                 {mcpCount} MCP
               </span>
             </Tooltip>
@@ -274,7 +246,7 @@ function AgentConfigurationSummary({
               })}
               className="max-w-xs whitespace-normal"
             >
-              <span className="cursor-default" aria-label={skillsAria ?? undefined}>
+              <span className="cursor-default" aria-label={`Skills: ${skillNames.join(', ')}`}>
                 {skillsCount} skill{skillsCount === 1 ? '' : 's'}
               </span>
             </Tooltip>
@@ -387,216 +359,6 @@ function AgentSchedulesBadge({
   );
 }
 
-function formatSparklineDay(iso: string): string {
-  const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) return iso;
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(ms));
-}
-
-function nearestSparklineIndex({
-  clientX,
-  svg,
-  count,
-  width,
-}: {
-  clientX: number;
-  svg: SVGSVGElement;
-  count: number;
-  width: number;
-}): number {
-  if (count <= 1) return 0;
-  const rect = svg.getBoundingClientRect();
-  const x = ((clientX - rect.left) / Math.max(rect.width, 1)) * width;
-  const step = width / (count - 1);
-  return Math.max(0, Math.min(count - 1, Math.round(x / step)));
-}
-
-function AgentLibrarySparkline({
-  points,
-  agentName,
-}: {
-  points: readonly AgentLibraryDailyPoint[] | null | undefined;
-  agentName: string;
-}) {
-  const [hover, setHover] = useState<{
-    index: number;
-    clientX: number;
-    clientY: number;
-  } | null>(null);
-
-  if (points == null) {
-    return (
-      <span className="text-text-secondary text-sm" aria-label={`Activity unavailable for ${agentName}`}>
-        —
-      </span>
-    );
-  }
-  if (points.length === 0 || points.every(point => point.value === 0)) {
-    return (
-      <span
-        className="bg-border/80 mt-3 block h-px w-20"
-        aria-label={`No activity in the last 14 days for ${agentName}`}
-      />
-    );
-  }
-
-  const width = 80;
-  const height = 28;
-  const padY = 2;
-  const values = points.map(point => point.value);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || 1;
-  const stepX = points.length === 1 ? 0 : width / (points.length - 1);
-  const coords = points.map((point, index) => {
-    const x = points.length === 1 ? width / 2 : index * stepX;
-    const y = height - padY - ((point.value - min) / span) * (height - padY * 2);
-    return { x, y };
-  });
-  const polyline = coords.map(({ x, y }) => `${String(x)},${String(y)}`).join(' ');
-  const hoverPoint = hover != null ? points[hover.index] : null;
-  const hoverCoord = hover != null ? coords[hover.index] : null;
-
-  const onMouseMove = (event: ReactMouseEvent<SVGSVGElement>) => {
-    const index = nearestSparklineIndex({
-      clientX: event.clientX,
-      svg: event.currentTarget,
-      count: points.length,
-      width,
-    });
-    setHover({ index, clientX: event.clientX, clientY: event.clientY });
-  };
-
-  return (
-    <Tooltip
-      open={hover != null && hoverPoint != null}
-      anchor={hover != null ? { left: hover.clientX, top: hover.clientY } : null}
-      interactive={false}
-      content={
-        hoverPoint == null ? null : (
-          <span className="flex flex-col gap-0.5 text-left">
-            <span className="text-text-secondary">{formatSparklineDay(hoverPoint.timestamp)}</span>
-            <span className="font-medium">{formatLibraryCostUsd(hoverPoint.value)}</span>
-          </span>
-        )
-      }
-    >
-      <svg
-        width={width}
-        height={height}
-        viewBox={`0 0 ${String(width)} ${String(height)}`}
-        className="cursor-crosshair overflow-visible text-teal-700 dark:text-teal-300"
-        aria-label={`Daily spend over 14 days for ${agentName}`}
-        role="img"
-        onMouseMove={onMouseMove}
-        onMouseLeave={() => setHover(null)}
-      >
-        <polyline
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-          points={polyline}
-        />
-        {hoverCoord != null ? (
-          <>
-            <line
-              x1={hoverCoord.x}
-              x2={hoverCoord.x}
-              y1={0}
-              y2={height}
-              stroke="currentColor"
-              strokeOpacity={0.25}
-              strokeWidth={1}
-            />
-            <circle cx={hoverCoord.x} cy={hoverCoord.y} r={2.5} fill="currentColor" />
-          </>
-        ) : null}
-      </svg>
-    </Tooltip>
-  );
-}
-
-function AgentSessionsCell({
-  usage,
-  loading,
-  agentName,
-}: {
-  usage: AgentLibraryUsageStats | undefined;
-  loading: boolean;
-  agentName: string;
-}) {
-  if (loading) return <Skeleton className="h-4 w-8 rounded" />;
-  if (usage?.totalSessions == null) {
-    return (
-      <span className="text-text-secondary text-sm" aria-label={`Session count unavailable for ${agentName}`}>
-        —
-      </span>
-    );
-  }
-  return (
-    <span className="text-text-primary text-sm font-medium" aria-label={`${String(usage.totalSessions)} sessions`}>
-      {usage.totalSessions}
-    </span>
-  );
-}
-
-function AgentSpendCell({
-  usage,
-  loading,
-  agentName,
-}: {
-  usage: AgentLibraryUsageStats | undefined;
-  loading: boolean;
-  agentName: string;
-}) {
-  if (loading) {
-    return (
-      <div className="flex flex-col gap-1">
-        <Skeleton className="h-4 w-14 rounded" />
-        <Skeleton className="h-3 w-20 rounded" />
-      </div>
-    );
-  }
-  if (usage?.totalCostUsd == null) {
-    return (
-      <span className="text-text-secondary text-sm" aria-label={`Spend unavailable for ${agentName}`}>
-        —
-      </span>
-    );
-  }
-  return (
-    <div className="flex min-w-0 flex-col gap-0.5">
-      <span className="text-text-primary text-sm font-medium">{formatLibraryCostUsd(usage.totalCostUsd)}</span>
-      {usage.costPerSessionUsd != null ? (
-        <span className="text-text-secondary text-xs">{formatLibraryCostUsd(usage.costPerSessionUsd)} / session</span>
-      ) : null}
-    </div>
-  );
-}
-
-function AgentLastRunCell({
-  usage,
-  loading,
-  agentName,
-  showLastRun,
-}: {
-  usage: AgentLibraryUsageStats | undefined;
-  loading: boolean;
-  agentName: string;
-  showLastRun: boolean;
-}) {
-  if (!showLastRun) return null;
-  if (loading) return <Skeleton className="h-4 w-16 rounded" />;
-  const label = formatLastRunAgo(usage?.lastRunAt);
-  return (
-    <span className="text-text-secondary whitespace-nowrap text-sm" aria-label={`Last run for ${agentName}: ${label}`}>
-      {label}
-    </span>
-  );
-}
-
 export function AgentLibraryRow({
   agent,
   canMutate,
@@ -606,7 +368,6 @@ export function AgentLibraryRow({
   canManageSchedules,
   scheduleSummary,
   usage,
-  usageLoading = false,
   showMetricsColumns = false,
   showLastRunColumn = false,
   onOpenSchedules,
@@ -618,6 +379,7 @@ export function AgentLibraryRow({
   variant = 'row',
 }: AgentLibraryRowProps) {
   const PermissionGuard = useSlot('PermissionGuard');
+  const SlottedUsageCells = useSlot('AgentLibraryUsageCells');
   const spec = agent.agentSpec;
   const modelName = spec?.model.name;
   const skillNames = (spec?.skills ?? []).map(mountName).filter((name: string | null): name is string => name != null);
@@ -630,6 +392,16 @@ export function AgentLibraryRow({
   const storedDescription = agent.description?.trim() || null;
   // Create falls back to name when description is missing; don't echo it under the title.
   const description = storedDescription != null && storedDescription !== agent.name ? storedDescription : null;
+  const usageLoading = (showMetricsColumns || showLastRunColumn) && usage == null;
+  const usageCells = (
+    <SlottedUsageCells
+      loading={usageLoading}
+      agentName={agent.name}
+      showMetrics={showMetricsColumns}
+      showLastRun={showLastRunColumn}
+      {...(usage !== undefined ? { usage } : {})}
+    />
+  );
 
   const overflowMenu = (
     <AgentOverflowMenu
@@ -681,54 +453,8 @@ export function AgentLibraryRow({
           <div className="min-w-0 flex-1">{nameContent}</div>
           {overflowMenu}
         </div>
-        <AgentConfigurationSummary
-          agentName={agent.name}
-          modelLabel={modelLabel}
-          modelTitle={modelTitle}
-          skillNames={skillNames}
-          mcpNames={mcpNames}
-        />
-        {showMetricsColumns ? (
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div className="flex flex-col gap-0.5">
-              <span className="text-text-secondary text-xs uppercase tracking-wide">Sessions</span>
-              <AgentSessionsCell usage={usage} loading={usageLoading} agentName={agent.name} />
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <span className="text-text-secondary text-xs uppercase tracking-wide">Spend</span>
-              <AgentSpendCell usage={usage} loading={usageLoading} agentName={agent.name} />
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <span className="text-text-secondary text-xs uppercase tracking-wide">Daily, 14d</span>
-              {usageLoading ? (
-                <Skeleton className="h-7 w-20 rounded" />
-              ) : (
-                <AgentLibrarySparkline points={usage?.dailyPoints} agentName={agent.name} />
-              )}
-            </div>
-            {showLastRunColumn ? (
-              <div className="flex flex-col gap-0.5">
-                <span className="text-text-secondary text-xs uppercase tracking-wide">Last run</span>
-                <AgentLastRunCell
-                  usage={usage}
-                  loading={usageLoading}
-                  agentName={agent.name}
-                  showLastRun={showLastRunColumn}
-                />
-              </div>
-            ) : null}
-          </div>
-        ) : showLastRunColumn ? (
-          <div className="flex flex-col gap-0.5 text-sm">
-            <span className="text-text-secondary text-xs uppercase tracking-wide">Last run</span>
-            <AgentLastRunCell
-              usage={usage}
-              loading={usageLoading}
-              agentName={agent.name}
-              showLastRun={showLastRunColumn}
-            />
-          </div>
-        ) : null}
+        {configurationSummary}
+        {usageCells}
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <AgentSchedulesContent
@@ -771,24 +497,13 @@ export function AgentLibraryRow({
             <AgentSpendCell usage={usage} loading={usageLoading} agentName={agent.name} />
           </TableCell>
           <TableCell className="w-28">
-            {usageLoading ? (
-              <Skeleton className="h-7 w-20 rounded" />
-            ) : (
-              <AgentLibrarySparkline points={usage?.dailyPoints} agentName={agent.name} />
-            )}
+            <AgentLibrarySparklineCell points={usage?.dailyPoints} loading={usageLoading} agentName={agent.name} />
           </TableCell>
         </>
       ) : null}
       <TableCell className="w-px">
         <div className="flex items-center justify-end gap-3">
-          {showLastRunColumn ? (
-            <AgentLastRunCell
-              usage={usage}
-              loading={usageLoading}
-              agentName={agent.name}
-              showLastRun={showLastRunColumn}
-            />
-          ) : null}
+          {showLastRunColumn ? <AgentLastRunCell usage={usage} loading={usageLoading} agentName={agent.name} /> : null}
           {tryButton}
           {overflowMenu}
         </div>
@@ -913,15 +628,12 @@ export function AgentsLibrary({ onSelectAgent, headerStart }: AgentsLibraryProps
     resourceIds: permissionAgentIds,
   });
 
-  const usageAgentIdsKey = open ? agents.map(libraryAgentId).join('\0') : '';
   const {
     usageByAgentId,
-    isLoading: usageLoading,
     metricsEnabled: showMetricsColumns,
     lastRunEnabled: showLastRunColumn,
   } = useAgentLibraryUsageStats({
-    agentIdsKey: usageAgentIdsKey,
-    enabled: open,
+    agentIds: permissionAgentIds,
     refreshKey: agentsListEpoch,
   });
 
@@ -1009,7 +721,6 @@ export function AgentsLibrary({ onSelectAgent, headerStart }: AgentsLibraryProps
         canManageSchedules={canOpenAgentSchedules}
         showMetricsColumns={showMetricsColumns}
         showLastRunColumn={showLastRunColumn}
-        usageLoading={usageLoading}
         variant={variant}
         {...(usage !== undefined ? { usage } : {})}
         {...(summary !== undefined ? { scheduleSummary: summary } : {})}
@@ -1152,9 +863,9 @@ export function AgentsLibrary({ onSelectAgent, headerStart }: AgentsLibraryProps
                     {showSchedulesColumn ? <TableHead className="w-[14rem]">Schedules</TableHead> : null}
                     {showMetricsColumns ? (
                       <>
-                        <TableHead>Sessions</TableHead>
-                        <TableHead>Spend</TableHead>
-                        <TableHead className="w-28">Daily, 14d</TableHead>
+                        <TableHead>{agentLibraryUsageLabels.sessions}</TableHead>
+                        <TableHead>{agentLibraryUsageLabels.spend}</TableHead>
+                        <TableHead className="w-28">{agentLibraryUsageLabels.daily}</TableHead>
                       </>
                     ) : null}
                     <TableHead className="w-px">

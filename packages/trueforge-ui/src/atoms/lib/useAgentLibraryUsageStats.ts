@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { useOptionalAgentMetricsServer, useOptionalAgentSessionsServer } from '../../server/ServerContext.js';
 import type {
@@ -11,7 +11,12 @@ import type {
 } from '../../server/types.js';
 import { DEFAULT_SESSION_TIME_WINDOW_MS } from '../../utils/sessionShareUrl.js';
 
-const SPARKLINE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+/** Daily cost series length. Meters use the session time window below. */
+export const AGENT_LIBRARY_SPARKLINE_DAYS = 14;
+/** Day count of `DEFAULT_SESSION_TIME_WINDOW_MS`, which the library meters query uses. */
+export const AGENT_LIBRARY_METERS_WINDOW_DAYS = DEFAULT_SESSION_TIME_WINDOW_MS / MS_PER_DAY;
+const SPARKLINE_WINDOW_MS = AGENT_LIBRARY_SPARKLINE_DAYS * MS_PER_DAY;
 const CHART_NAME = 'sessions_cost_over_time';
 
 export type AgentLibraryDailyPoint = {
@@ -24,7 +29,11 @@ export type AgentLibraryUsageStats = {
   totalCostUsd: number | null;
   costPerSessionUsd: number | null;
   dailyPoints: AgentLibraryDailyPoint[] | null;
-  lastRunAt: string | null;
+  /**
+   * Present only after `listSessions` succeeds. `null` means the agent has no
+   * sessions; omitted when the fetch failed (distinct from "never ran").
+   */
+  lastRunAt?: string | null;
 };
 
 function meterValue(meters: readonly AgentMetricMeter[], name: string): number | null {
@@ -38,6 +47,15 @@ function chartPoints(points: readonly AgentMetricPoint[] | undefined): AgentLibr
     timestamp: point.timestamp,
     value: Number.isFinite(point.value) ? point.value : 0,
   }));
+}
+
+function unavailableUsage(): AgentLibraryUsageStats {
+  return {
+    totalSessions: null,
+    totalCostUsd: null,
+    costPerSessionUsd: null,
+    dailyPoints: null,
+  };
 }
 
 async function loadUsageForAgent({
@@ -86,15 +104,16 @@ async function loadUsageForAgent({
             () => ({ ok: false as const }),
           );
 
-  const lastSessionPromise =
+  // `undefined` = sessions server absent or the call failed; `null` = no sessions.
+  const lastRunPromise: Promise<string | null | undefined> =
     sessions == null
-      ? Promise.resolve(null)
+      ? Promise.resolve(undefined)
       : sessions.listSessions({ agentId, limit: 1, order: 'desc' }).then(
-          page => page.data[0] ?? null,
-          () => null,
+          page => page.data[0]?.lastActivityAt ?? null,
+          () => undefined,
         );
 
-  const [metersResult, chartResult, lastSession] = await Promise.all([metersPromise, chartPromise, lastSessionPromise]);
+  const [metersResult, chartResult, lastRunAt] = await Promise.all([metersPromise, chartPromise, lastRunPromise]);
 
   const meters = metersResult.ok ? metersResult.meters : [];
   const dailyPoints = chartResult.ok ? chartPoints(chartResult.data.graphs[0]?.graphLines[0]?.values) : null;
@@ -104,26 +123,24 @@ async function loadUsageForAgent({
     totalCostUsd: metersResult.ok ? meterValue(meters, 'total_cost_in_usd') : null,
     costPerSessionUsd: metersResult.ok ? meterValue(meters, 'cost_per_session_in_usd') : null,
     dailyPoints,
-    lastRunAt: lastSession?.lastActivityAt ?? null,
+    ...(lastRunAt === undefined ? {} : { lastRunAt }),
   };
 }
 
 /**
  * Loads per-agent spend/session meters, a 14d cost sparkline, and last-run
- * for the visible library page. One request set per agent id (N+1 by design).
+ * for the visible library page. Each agent paints as its own requests finish.
+ * ponytail: three requests per agent (N+1). Replace with one batched metrics
+ * call if the library page grows past a few dozen rows.
  */
 export function useAgentLibraryUsageStats({
-  agentIdsKey,
-  enabled,
+  agentIds,
   refreshKey,
 }: {
-  /** Stable `\0`-joined agent ids for the current page. */
-  agentIdsKey: string;
-  enabled: boolean;
+  agentIds: readonly string[];
   refreshKey: number;
 }): {
   usageByAgentId: Map<string, AgentLibraryUsageStats>;
-  isLoading: boolean;
   metricsEnabled: boolean;
   lastRunEnabled: boolean;
 } {
@@ -132,54 +149,62 @@ export function useAgentLibraryUsageStats({
   const metricsEnabled = metrics != null;
   const lastRunEnabled = sessions != null;
   const [usageByAgentId, setUsageByAgentId] = useState<Map<string, AgentLibraryUsageStats>>(() => new Map());
-  const [isLoading, setIsLoading] = useState(false);
+  const agentIdsKey = agentIds.join('\0');
+  const loadedIdsKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const agentIds = agentIdsKey.length === 0 ? [] : agentIdsKey.split('\0');
-    if (!enabled || agentIds.length === 0 || (metrics == null && sessions == null)) {
-      setUsageByAgentId(new Map());
-      setIsLoading(false);
+    const ids = agentIdsKey.length === 0 ? [] : agentIdsKey.split('\0');
+    if (ids.length === 0 || (metrics == null && sessions == null)) {
+      loadedIdsKeyRef.current = agentIdsKey;
+      setUsageByAgentId(prev => (prev.size === 0 ? prev : new Map()));
       return;
     }
 
-    let cancelled = false;
-    setIsLoading(true);
-    setUsageByAgentId(new Map());
+    // Keep the previous page's numbers across a refresh so rows don't flash
+    // skeletons. A new id set has nothing worth keeping.
+    if (loadedIdsKeyRef.current !== agentIdsKey) {
+      loadedIdsKeyRef.current = agentIdsKey;
+      setUsageByAgentId(prev => (prev.size === 0 ? prev : new Map()));
+    }
 
+    let cancelled = false;
     const now = Date.now();
     const metersEnd = new Date(now).toISOString();
     const metersStart = new Date(now - DEFAULT_SESSION_TIME_WINDOW_MS).toISOString();
     const sparklineStart = new Date(now - SPARKLINE_WINDOW_MS).toISOString();
 
-    void Promise.all(
-      agentIds.map(async agentId => {
-        const stats = await loadUsageForAgent({
-          agentId,
-          metrics,
-          sessions,
-          metersStart,
-          metersEnd,
-          sparklineStart,
-          sparklineEnd: metersEnd,
-        });
-        return [agentId, stats] as const;
-      }),
-    )
-      .then(entries => {
-        if (cancelled) return;
-        setUsageByAgentId(new Map(entries));
-        setIsLoading(false);
+    for (const agentId of ids) {
+      void loadUsageForAgent({
+        agentId,
+        metrics,
+        sessions,
+        metersStart,
+        metersEnd,
+        sparklineStart,
+        sparklineEnd: metersEnd,
       })
-      .catch(() => {
-        if (cancelled) return;
-        setUsageByAgentId(new Map());
-        setIsLoading(false);
-      });
+        .then(stats => {
+          if (cancelled) return;
+          setUsageByAgentId(prev => {
+            const next = new Map(prev);
+            next.set(agentId, stats);
+            return next;
+          });
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setUsageByAgentId(prev => {
+            const next = new Map(prev);
+            next.set(agentId, unavailableUsage());
+            return next;
+          });
+        });
+    }
 
     return () => {
       cancelled = true;
     };
-  }, [agentIdsKey, enabled, metrics, refreshKey, sessions]);
+  }, [agentIdsKey, metrics, refreshKey, sessions]);
 
-  return { usageByAgentId, isLoading, metricsEnabled, lastRunEnabled };
+  return { usageByAgentId, metricsEnabled, lastRunEnabled };
 }
